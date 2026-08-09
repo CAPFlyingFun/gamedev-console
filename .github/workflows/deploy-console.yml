@@ -1,0 +1,89 @@
+# Builds the console and publishes it to GitHub Pages.
+#
+# The point of doing it here rather than by hand is that nothing built ever
+# gets committed. Pages serves the artifact this run produces, so the only
+# thing in git is source, and updating the live app means pushing to main.
+name: Deploy console to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, but never cancel one that is already publishing —
+# a half-finished Pages deployment is a broken site, not a skipped job.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The whole workspace, because the console depends on a sibling package
+      # (@workspace/api-client-react) that a filtered install would not fetch.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # A project Pages site is served from /<repo>/, and Vite has to be told
+      # so at BUILD time — the asset URLs are baked into index.html and cannot
+      # be fixed afterwards. Deriving it from GITHUB_REPOSITORY rather than
+      # hard-coding it means a rename can't quietly break every asset link.
+      - name: Work out the base path
+        id: base
+        run: echo "path=/${GITHUB_REPOSITORY#*/}/" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          # vite.config.ts throws unless PORT is set, even for a build that
+          # never starts a server. The value is irrelevant; its presence isn't.
+          PORT: '5173'
+          BASE_PATH: ${{ steps.base.outputs.path }}
+        run: pnpm --filter @workspace/gamedev-console run build
+
+      # Fail loudly here rather than shipping a page whose script 404s.
+      - name: Check the build points at the right path
+        env:
+          BASE: ${{ steps.base.outputs.path }}
+        run: |
+          set -euo pipefail
+          out=artifacts/gamedev-console/dist/public
+          test -f "$out/index.html" || { echo "no index.html in $out"; exit 1; }
+          test -f "$out/sw.js"      || { echo "no sw.js in $out"; exit 1; }
+          grep -q "src=\"${BASE}assets/" "$out/index.html" \
+            || { echo "index.html does not reference ${BASE}assets/"; exit 1; }
+          grep -q "\"${BASE}\"" "$out"/assets/*.js \
+            || { echo "bundle did not inline BASE_URL as ${BASE}"; exit 1; }
+          echo "base path ${BASE} baked in correctly"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: artifacts/gamedev-console/dist/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
