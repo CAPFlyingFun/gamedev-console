@@ -74,6 +74,11 @@
      * box with the codepoint inside. A system stack always has it.
      */
     input[type="password"] { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    /* The UA default grey is nearly invisible on a #09090b field. */
+    ::placeholder { color: var(--text-muted); opacity: 0.85; }
+    /* A stored key should LOOK stored — an empty box reads as "gone". */
+    input.has-key { border-color: var(--success); }
+    input.has-key::placeholder { color: var(--success); opacity: 0.9; }
     textarea { resize: vertical; min-height: 80px; }
     
     button {
@@ -561,7 +566,9 @@
         dot.className = `status-dot ${hasKey ? 'set' : 'unset'}`;
         const field = getEl(`input-${k}`);
         field.value = '';
-        field.placeholder = hasKey ? 'saved — type a new key to replace' : KEY_PLACEHOLDER[k];
+        field.placeholder = hasKey ? 'saved — type to replace' : KEY_PLACEHOLDER[k];
+        field.classList.toggle('has-key', hasKey);
+        dot.title = hasKey ? 'A key is stored in this browser' : 'No key stored';
       });
     }
 
