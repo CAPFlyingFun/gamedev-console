@@ -122,6 +122,19 @@
     .recent-forget:hover { background: none; color: var(--error); opacity: 1; }
 
     .file-list { flex: 1; overflow-y: auto; padding-top: 4px; }
+
+    .build-bar {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+      padding: 6px 10px; border-top: 1px solid var(--panel-border);
+      background: var(--panel);
+      font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
+    }
+    #build-stamp { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .build-update {
+      flex-shrink: 0; padding: 3px 8px; font-size: 10px; font-weight: 600;
+      background: var(--accent); color: #000;
+    }
+    .build-update:hover { background: var(--accent-hover); color: #000; }
     .file-item {
       padding: 6px 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
@@ -261,6 +274,12 @@
       </div>
       <div class="file-list" id="file-list">
         <div style="padding: 12px; color: var(--text-muted); font-size: 11px;">No repository loaded.</div>
+      </div>
+
+      <div class="build-bar" id="build-bar">
+        <span id="build-stamp" title="Loading build info…">&nbsp;</span>
+        <button id="btn-reload" class="build-update" style="display:none;"
+                title="A newer build is live">Update ready &mdash; reload</button>
       </div>
     </div>
     
@@ -414,6 +433,40 @@
       return btoa(binString);
     }
     
+    // --- BUILD STAMP ---
+    /* Substituted at build time by vite.config.ts. */
+    const BUILD = __BUILD_STAMP__;
+
+    getEl('build-stamp').textContent = `v${BUILD.version} · ${BUILD.commit}`;
+    getEl('build-stamp').title =
+      `version ${BUILD.version}\ncommit ${BUILD.commit}\nbuilt ${BUILD.built}`;
+    getEl('btn-reload').onclick = () => location.reload();
+
+    /*
+     * A deploy is invisible to a tab that is already open, and this app is a
+     * PWA people leave running. So ask the server what it is serving and say
+     * so, rather than letting the footer keep advertising a build that has
+     * been replaced. no-store because the whole point of this file is that a
+     * cached answer is the wrong answer.
+     */
+    async function checkForUpdate() {
+      if (BUILD.commit === 'dev') return;   // local build; nothing to compare to
+      try {
+        const res = await fetch(`${import.meta.env.BASE_URL}version.json`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const live = await res.json();
+        if (live.commit && live.commit !== BUILD.commit) {
+          getEl('btn-reload').style.display = 'block';
+          getEl('build-stamp').title += `\n\nlive build is ${live.commit}`;
+        }
+      } catch {
+        /* Offline, or the check is blocked — the app still works. */
+      }
+    }
+    checkForUpdate();
+    window.addEventListener('focus', checkForUpdate);
+    setInterval(checkForUpdate, 10 * 60 * 1000);
+
     // --- KEY MANAGER ---
     function updateKeyStatus() {
       ['openai', 'claude', 'github'].forEach(k => {
