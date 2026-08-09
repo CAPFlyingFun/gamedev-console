@@ -288,9 +288,17 @@
     import { oneDark } from "@codemirror/theme-one-dark";
 
     // --- SERVICE WORKER ---
+    /*
+     * REGISTERED AT THE APP'S OWN PATH, not at the site root. On GitHub Pages
+     * the console lives under /gamedev-console/, and '/sw.js' there is either
+     * a 404 or — worse, if the host site ever ships one — a worker whose
+     * scope covers the whole domain. BASE_URL is baked in at build time from
+     * BASE_PATH, so this is correct at the root and under any subpath.
+     */
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch(err => {
+        const base = import.meta.env.BASE_URL;
+        navigator.serviceWorker.register(`${base}sw.js`, { scope: base }).catch(err => {
           console.error('ServiceWorker registration failed: ', err);
         });
       });
