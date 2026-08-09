@@ -169,6 +169,21 @@
     
     .master-card { border-color: var(--accent); box-shadow: 0 0 10px #00ffd022; }
     .master-card .agent-card-header { background: #00ffd011; color: var(--accent); }
+    /* The code cards are the deliverable — the plans above them are working notes. */
+    .code-card { border-color: var(--success); }
+    .code-card .agent-card-header { background: #4ade8011; color: var(--success); }
+
+    .ctx-row {
+      display: flex; align-items: center; gap: 6px;
+      margin-bottom: 8px; font-size: 11px; color: var(--text-muted);
+      cursor: pointer;
+    }
+    .ctx-row input { width: auto; margin: 0; accent-color: var(--accent); }
+    select {
+      background: var(--bg); border: 1px solid var(--panel-border); color: var(--text);
+      padding: 6px 8px; font-size: 12px; font-family: var(--font-sans);
+      border-radius: 4px; outline: none; box-sizing: border-box;
+    }
     
     .code-block { margin: 8px 0; border: 1px solid var(--panel-border); border-radius: 4px; position: relative; background: #000; }
     .code-block pre { margin: 0; padding: 10px; overflow-x: auto; font-family: var(--font-mono); font-size: 11px; color: #a6accd; }
@@ -276,38 +291,70 @@
     <!-- RIGHT PANEL -->
     <div class="panel" id="right-panel">
       <div class="section prompt-area">
-        <div class="section-title">Multi-Agent Prompt</div>
+        <div class="section-title">Plan &rarr; Merge &rarr; Code</div>
         <div class="input-group">
-          <input type="text" id="model-openai" value="gpt-4o-mini" title="OpenAI Model" style="width:50%" />
-          <input type="text" id="model-claude" value="claude-3-5-sonnet-latest" title="Claude Model" style="width:50%" />
+          <input type="text" id="model-openai" value="gpt-4o-mini"
+                 title="ChatGPT — writes a plan" style="width:50%" />
+          <input type="text" id="model-claude" value="claude-opus-5"
+                 title="Claude — writes a plan, and writes the code" style="width:50%" />
         </div>
+        <div class="input-group">
+          <input type="text" id="model-master" value="gpt-4o"
+                 title="Master — merges both plans and assigns the work. Put a reasoning model here if your account has one." style="width:50%" />
+          <select id="coder-choice" style="width:50%" title="Who writes the code">
+            <option value="claude">Claude codes</option>
+            <option value="auto">Master decides</option>
+            <option value="chatgpt">ChatGPT codes</option>
+            <option value="both">Both code</option>
+          </select>
+        </div>
+        <label class="ctx-row">
+          <input type="checkbox" id="send-file" checked />
+          Send the open file as context
+        </label>
         <textarea id="prompt-input" placeholder="Describe the feature or fix..."></textarea>
         <button id="btn-submit-prompt" class="btn-primary" style="width: 100%;">Execute Prompt</button>
       </div>
-      
+
       <div class="responses-area" id="responses-area">
-        <div class="agent-card master-card" id="card-master" style="display:none;">
-          <div class="agent-card-header">
-            Master Synthesis
-            <span id="master-status"></span>
-          </div>
-          <div class="agent-card-content" id="content-master"></div>
-        </div>
-        
         <div class="agent-card" id="card-openai" style="display:none;">
           <div class="agent-card-header">
-            OpenAI (<span id="label-model-openai"></span>)
+            Plan &mdash; ChatGPT (<span id="label-model-openai"></span>)
             <span id="openai-status"></span>
           </div>
           <div class="agent-card-content" id="content-openai"></div>
         </div>
-        
+
         <div class="agent-card" id="card-claude" style="display:none;">
           <div class="agent-card-header">
-            Claude (<span id="label-model-claude"></span>)
+            Plan &mdash; Claude (<span id="label-model-claude"></span>)
             <span id="claude-status"></span>
           </div>
           <div class="agent-card-content" id="content-claude"></div>
+        </div>
+
+        <div class="agent-card master-card" id="card-master" style="display:none;">
+          <div class="agent-card-header">
+            Master plan
+            <span id="master-status"></span>
+          </div>
+          <div class="agent-card-content" id="content-master"></div>
+        </div>
+
+        <div class="agent-card code-card" id="card-code-claude" style="display:none;">
+          <div class="agent-card-header">
+            Code &mdash; Claude
+            <span id="code-claude-status"></span>
+          </div>
+          <div class="agent-card-content" id="content-code-claude"></div>
+        </div>
+
+        <div class="agent-card code-card" id="card-code-openai" style="display:none;">
+          <div class="agent-card-header">
+            Code &mdash; ChatGPT
+            <span id="code-openai-status"></span>
+          </div>
+          <div class="agent-card-content" id="content-code-openai"></div>
         </div>
       </div>
     </div>
@@ -708,30 +755,45 @@
       });
     }
 
-    async function callOpenAI(prompt, systemPrompt) {
+    /*
+     * `inlineSystem` folds the role instructions into the user turn instead of
+     * sending a system message. OpenAI's reasoning models don't take the same
+     * system role as the chat models, and the master step is exactly where you
+     * want to put a reasoning model — so that call inlines rather than risking
+     * a role rejection on a model the user is entitled to choose.
+     *
+     * No max_tokens is sent to OpenAI on purpose: reasoning models reject it in
+     * favour of max_completion_tokens, and omitting it works on every model.
+     */
+    async function callOpenAI(prompt, systemPrompt, { model, inlineSystem } = {}) {
       const key = localStorage.getItem('openaiKey');
       if (!key) throw new Error('OpenAI key missing');
-      const model = getEl('model-openai').value.trim() || 'gpt-4o-mini';
+      const use = model || getEl('model-openai').value.trim() || 'gpt-4o-mini';
+      const messages = inlineSystem
+        ? [{ role: 'user', content: `${systemPrompt}\n\n---\n\n${prompt}` }]
+        : [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }];
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [
-            {role: 'system', content: systemPrompt},
-            {role: 'user', content: prompt}
-          ]
-        })
+        body: JSON.stringify({ model: use, messages })
       });
       if (!res.ok) throw new Error(`OpenAI: ${await res.text()}`);
       const data = await res.json();
       return data.choices[0].message.content;
     }
 
-    async function callClaude(prompt, systemPrompt) {
+    /*
+     * 16000, not 4096. This is a non-streaming request, so the ceiling is what
+     * fits inside the HTTP timeout rather than the model's 128k limit — but
+     * 4096 truncated any full-file rewrite of a real game file mid-function,
+     * which reads as the model giving up rather than as a budget being hit.
+     */
+    const CLAUDE_MAX_TOKENS = 16000;
+
+    async function callClaude(prompt, systemPrompt, { model } = {}) {
       const key = localStorage.getItem('claudeKey');
       if (!key) throw new Error('Claude key missing');
-      const model = getEl('model-claude').value.trim() || 'claude-3-5-sonnet-latest';
+      const use = model || getEl('model-claude').value.trim() || 'claude-opus-5';
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -741,74 +803,169 @@
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model,
-          max_tokens: 4096,
+          model: use,
+          max_tokens: CLAUDE_MAX_TOKENS,
           system: systemPrompt,
           messages: [{role: 'user', content: prompt}]
         })
       });
       if (!res.ok) throw new Error(`Claude: ${await res.text()}`);
       const data = await res.json();
-      return data.content[0].text;
+      /* Thinking blocks can precede the text on current models. */
+      const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+      if (!text) throw new Error(`Claude: no text in response (stop_reason: ${data.stop_reason})`);
+      return text;
     }
+
+    // --- PLAN -> MERGE -> CODE ---
+    const ROLE = {
+      planner: `You are a senior game developer producing a PLAN, not code.
+Respond with:
+1. What you would change, file by file.
+2. The approach, plus one alternative you rejected and why.
+3. Risks, edge cases, and what this could break.
+4. How to verify it worked.
+Do not write the implementation. Short fragments are fine only where prose
+would be ambiguous. Be concrete about names, paths, and values.`,
+
+      master: `You are the technical lead. Two engineers planned the same task
+independently. Merge their plans into ONE plan: take the better call wherever
+they disagree and say briefly why, and correct anything either got wrong.
+
+Output exactly this shape and nothing else:
+
+PLAN
+<numbered steps, concrete enough to implement without guessing>
+
+ASSIGNEE: claude | chatgpt | both
+<one line on why>
+
+Do not write the implementation — the assignee does that.`,
+
+      coder: `You are an expert game developer. Implement the plan you are given.
+Output complete, working code in fenced blocks, each preceded by the file path
+it belongs to. If the plan is wrong or impossible, say so in one sentence and
+implement the closest correct thing. Keep prose short — the code is the
+deliverable.`,
+    };
+
+    /* Enough for a large source file, bounded so a huge one can't blow the
+     * request up. The truncation is announced so the model doesn't treat a cut
+     * file as the whole file. */
+    const CONTEXT_LIMIT = 60000;
+
+    function buildContext() {
+      if (!getEl('send-file').checked || !currentFile.path) return '';
+      const owner = getEl('repo-owner').value.trim();
+      const repo = getEl('repo-name').value.trim();
+      const branch = getEl('repo-branch').value.trim() || 'main';
+      let body = editorView.state.doc.toString();
+      let note = '';
+      if (body.length > CONTEXT_LIMIT) {
+        body = body.slice(0, CONTEXT_LIMIT);
+        note = `\n\n[TRUNCATED at ${CONTEXT_LIMIT} characters — this is the start of the file, not all of it.]`;
+      }
+      return `\n\n--- OPEN FILE: ${owner}/${repo}@${branch} :: ${currentFile.path} ---\n`
+        + `${body}${note}\n--- END OPEN FILE ---\n`;
+    }
+
+    /** Pull the master's routing decision out of its reply. */
+    function readAssignee(masterText) {
+      const m = /^\s*ASSIGNEE:\s*(claude|chatgpt|both)\b/im.exec(masterText || '');
+      return m ? m[1].toLowerCase() : 'claude';   // default to the user's preference
+    }
+
+    /* Kept current rather than stamped at submit time, so the card headers name
+     * a model before the first run instead of reading "PLAN — CLAUDE ( )". */
+    function syncModelLabels() {
+      getEl('label-model-openai').textContent = getEl('model-openai').value.trim();
+      getEl('label-model-claude').textContent = getEl('model-claude').value.trim();
+    }
+    getEl('model-openai').oninput = syncModelLabels;
+    getEl('model-claude').oninput = syncModelLabels;
+    syncModelLabels();
+
+    const show = (id, on) => { getEl(`card-${id}`).style.display = on ? 'flex' : 'none'; };
+    const busy = (id) => { getEl(`${id}-status`).innerHTML = '<span class="loader"></span>'; };
+    const done = (id, txt) => {
+      getEl(`${id}-status`).textContent = 'DONE';
+      renderMarkdown(txt, `content-${id}`);
+    };
+    const failed = (id, e) => {
+      getEl(`${id}-status`).textContent = 'ERROR';
+      getEl(`content-${id}`).innerHTML = `<div class="error-text">${e.message}</div>`;
+    };
 
     getEl('btn-submit-prompt').onclick = async () => {
       const prompt = getEl('prompt-input').value.trim();
       if (!prompt) return;
-      
+
       const btn = getEl('btn-submit-prompt');
       btn.disabled = true;
-      btn.textContent = 'Executing...';
-      
-      const sysPrompt = "You are an expert game developer. Provide complete, production-ready code. Explain briefly, but focus on outputting clean, functional code blocks.";
-      
-      ['openai', 'claude', 'master'].forEach(agent => {
-        getEl(`card-${agent}`).style.display = agent === 'master' ? 'none' : 'flex';
-        getEl(`${agent}-status`).innerHTML = '<span class="loader"></span>';
-        getEl(`content-${agent}`).innerHTML = '';
-      });
-      
-      getEl('label-model-openai').textContent = getEl('model-openai').value;
-      getEl('label-model-claude').textContent = getEl('model-claude').value;
-      
-      let resOAI = null, resClaude = null;
-      
-      const pOAI = callOpenAI(prompt, sysPrompt)
-        .then(txt => { resOAI = txt; getEl('openai-status').textContent = 'DONE'; renderMarkdown(txt, 'content-openai'); })
-        .catch(e => { getEl('openai-status').textContent = 'ERROR'; getEl('content-openai').innerHTML = `<div class="error-text">${e.message}</div>`; });
-        
-      const pClaude = callClaude(prompt, sysPrompt)
-        .then(txt => { resClaude = txt; getEl('claude-status').textContent = 'DONE'; renderMarkdown(txt, 'content-claude'); })
-        .catch(e => { getEl('claude-status').textContent = 'ERROR'; getEl('content-claude').innerHTML = `<div class="error-text">${e.message}</div>`; });
-        
-      await Promise.allSettled([pOAI, pClaude]);
-      
-      if (resOAI || resClaude) {
-        getEl('card-master').style.display = 'flex';
-        getEl('master-status').innerHTML = '<span class="loader"></span>';
-        
-        const masterSys = "You are a Master Game Developer. Review the code provided by OpenAI and Claude. Merge the best parts, fix any flaws, and output the absolute best, finalized code solution. Output ONLY the final response with code blocks.";
-        const masterPrompt = `USER PROMPT:\n${prompt}\n\nOPENAI:\n${resOAI || 'Failed'}\n\nCLAUDE:\n${resClaude || 'Failed'}`;
-        
+      btn.textContent = 'Planning...';
+
+      const cards = ['openai', 'claude', 'master', 'code-claude', 'code-openai'];
+      cards.forEach(id => { show(id, false); getEl(`content-${id}`).innerHTML = ''; });
+
+      const task = `TASK:\n${prompt}${buildContext()}`;
+
+      try {
+        /* 1. Both models plan the same task, in parallel. */
+        show('openai', true); busy('openai');
+        show('claude', true); busy('claude');
+        let planOAI = null, planClaude = null;
+        await Promise.allSettled([
+          callOpenAI(task, ROLE.planner)
+            .then(t => { planOAI = t; done('openai', t); }).catch(e => failed('openai', e)),
+          callClaude(task, ROLE.planner)
+            .then(t => { planClaude = t; done('claude', t); }).catch(e => failed('claude', e)),
+        ]);
+        if (!planOAI && !planClaude) throw new Error('Both planners failed — nothing to merge.');
+
+        /* 2. The master merges them into one plan and names an assignee. */
+        btn.textContent = 'Merging...';
+        show('master', true); busy('master');
+        const masterModel = getEl('model-master').value.trim() || 'gpt-4o';
+        const merged = `${task}\n\nCHATGPT'S PLAN:\n${planOAI || '(failed)'}`
+          + `\n\nCLAUDE'S PLAN:\n${planClaude || '(failed)'}`;
+        let plan;
         try {
-          let masterTxt = '';
-          if (localStorage.getItem('openaiKey')) {
-             masterTxt = await callOpenAI(masterPrompt, masterSys);
-          } else if (localStorage.getItem('claudeKey')) {
-             masterTxt = await callClaude(masterPrompt, masterSys);
-          } else {
-             throw new Error('No API key available for Master synthesis (needs OpenAI or Claude).');
-          }
-          getEl('master-status').textContent = 'DONE';
-          renderMarkdown(masterTxt, 'content-master');
-        } catch(e) {
-          getEl('master-status').textContent = 'ERROR';
-          getEl('content-master').innerHTML = `<div class="error-text">${e.message}</div>`;
+          plan = await callOpenAI(merged, ROLE.master,
+            { model: masterModel, inlineSystem: true });
+        } catch (e) {
+          /* Without a master there is no merged plan, so fall back rather than
+           * silently coding from one planner's draft. */
+          plan = await callClaude(merged, ROLE.master);
         }
+        done('master', plan);
+
+        /* 3. The assignee writes the code from the master's plan. */
+        const choice = getEl('coder-choice').value;
+        const who = choice === 'auto' ? readAssignee(plan) : choice;
+        const brief = `${task}\n\nAPPROVED PLAN — implement this:\n${plan}`;
+
+        btn.textContent = 'Coding...';
+        const jobs = [];
+        if (who === 'claude' || who === 'both') {
+          show('code-claude', true); busy('code-claude');
+          jobs.push(callClaude(brief, ROLE.coder)
+            .then(t => done('code-claude', t)).catch(e => failed('code-claude', e)));
+        }
+        if (who === 'chatgpt' || who === 'both') {
+          show('code-openai', true); busy('code-openai');
+          jobs.push(callOpenAI(brief, ROLE.coder)
+            .then(t => done('code-openai', t)).catch(e => failed('code-openai', e)));
+        }
+        await Promise.allSettled(jobs);
+      } catch (e) {
+        const box = getEl('content-master');
+        box.innerHTML = `<div class="error-text">${e.message}</div>`;
+        show('master', true);
+        getEl('master-status').textContent = 'ERROR';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Execute Prompt';
       }
-      
-      btn.disabled = false;
-      btn.textContent = 'Execute Prompt';
     };
   </script>
 </body>
