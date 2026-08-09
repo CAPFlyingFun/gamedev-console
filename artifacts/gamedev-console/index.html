@@ -89,6 +89,38 @@
     .status-dot.set { background: var(--success); box-shadow: 0 0 6px var(--success); }
     .status-dot.unset { background: var(--error); box-shadow: 0 0 6px var(--error); }
     
+    .recents { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
+    .recent-item {
+      display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+      border-radius: 4px; cursor: pointer;
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+    }
+    .recent-item:hover { background: var(--bg); color: var(--text); }
+    .recent-name {
+      flex: 1 1 auto; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /*
+     * The branch truncates before the name does. A long branch name is
+     * otherwise wide enough to squeeze "CAPFlyingFun/Thronemound-Colony-Sim"
+     * down to "CAPFl…", hiding the one field you actually pick the row by.
+     * The full text stays on the row's title.
+     */
+    .recent-branch {
+      /* Never shrinks below its own text — only capped. With shrink enabled,
+       * "main" collapsed to "ma…" to make room for a long repo name. */
+      flex: 0 0 auto; max-width: 42%;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--accent); opacity: 0.65;
+    }
+    /* Hidden until hover so the row reads as a name, not a row of controls. */
+    .recent-forget {
+      background: none; border: none; padding: 0 2px; flex-shrink: 0;
+      font-size: 13px; line-height: 1; color: var(--text-muted); opacity: 0;
+    }
+    .recent-item:hover .recent-forget { opacity: 0.55; }
+    .recent-forget:hover { background: none; color: var(--error); opacity: 1; }
+
     .file-list { flex: 1; overflow-y: auto; padding-top: 4px; }
     .file-item {
       padding: 6px 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -193,12 +225,17 @@
       
       <div class="section">
         <div class="section-title">Repository</div>
-        <input type="text" id="repo-owner" placeholder="Owner (e.g. torvalds)" />
-        <input type="text" id="repo-name" placeholder="Repo (e.g. linux)" />
+        <input type="text" id="repo-owner" placeholder="Owner (e.g. torvalds)"
+               list="recent-owners" autocomplete="off" />
+        <datalist id="recent-owners"></datalist>
+        <input type="text" id="repo-name" placeholder="Repo (e.g. linux)"
+               list="recent-names" autocomplete="off" />
+        <datalist id="recent-names"></datalist>
         <div class="input-group">
           <input type="text" id="repo-branch" value="main" placeholder="Branch" />
           <button id="btn-load-repo" class="btn-primary">Load</button>
         </div>
+        <div class="recents" id="recents"></div>
       </div>
       
       <div class="section" style="padding-bottom:0; border-bottom:none;">
@@ -429,15 +466,96 @@
       return res.json();
     }
 
-    getEl('btn-load-repo').onclick = async () => {
+    // --- RECENTLY OPENED ---
+    const RECENTS_KEY = 'recentRepos';
+    const RECENTS_MAX = 8;
+
+    function readRecents() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]');
+        return Array.isArray(raw) ? raw.filter(r => r && r.owner && r.repo) : [];
+      } catch {
+        return [];   // Corrupt entry shouldn't take the whole panel down.
+      }
+    }
+
+    function writeRecents(list) {
+      localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, RECENTS_MAX)));
+      renderRecents();
+    }
+
+    /*
+     * Only ever called after a tree loads. Remembering on click instead would
+     * fill the list with typos and repos you have no access to — the ones you
+     * least want one keystroke away.
+     */
+    function rememberRepo(owner, repo, branch) {
+      const same = r => r.owner === owner && r.repo === repo && r.branch === branch;
+      writeRecents([{ owner, repo, branch }, ...readRecents().filter(r => !same(r))]);
+    }
+
+    function renderRecents() {
+      const list = readRecents();
+      const box = getEl('recents');
+      box.innerHTML = '';
+
+      /* Each field suggests what you've actually used, independently — the
+       * owner you want is often paired with a repo you haven't opened yet. */
+      const fill = (id, values) => {
+        const dl = getEl(id);
+        dl.innerHTML = '';
+        [...new Set(values)].forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v;
+          dl.appendChild(opt);
+        });
+      };
+      fill('recent-owners', list.map(r => r.owner));
+      fill('recent-names', list.map(r => r.repo));
+
+      list.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'recent-item';
+        row.title = `${r.owner}/${r.repo} @ ${r.branch}`;
+
+        const name = document.createElement('span');
+        name.className = 'recent-name';
+        name.textContent = `${r.owner}/${r.repo}`;
+
+        const branch = document.createElement('span');
+        branch.className = 'recent-branch';
+        branch.textContent = r.branch;
+
+        const forget = document.createElement('button');
+        forget.className = 'recent-forget';
+        forget.textContent = '×';
+        forget.title = 'Forget';
+        forget.onclick = (e) => {
+          e.stopPropagation();   // Don't load the thing being removed.
+          writeRecents(readRecents().filter(
+            x => !(x.owner === r.owner && x.repo === r.repo && x.branch === r.branch)));
+        };
+
+        row.append(name, branch, forget);
+        row.onclick = () => {
+          getEl('repo-owner').value = r.owner;
+          getEl('repo-name').value = r.repo;
+          getEl('repo-branch').value = r.branch;
+          loadRepo();
+        };
+        box.appendChild(row);
+      });
+    }
+
+    async function loadRepo() {
       const owner = getEl('repo-owner').value.trim();
       const repo = getEl('repo-name').value.trim();
       const branch = getEl('repo-branch').value.trim() || 'main';
       if (!owner || !repo) return alert('Owner and Repo required');
-      
+
       const listEl = getEl('file-list');
       listEl.innerHTML = '<div class="loader" style="padding:12px;">Loading tree...</div>';
-      
+
       try {
         const data = await apiGH(`/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`);
         if (data.truncated) console.warn("Tree truncated");
@@ -451,10 +569,14 @@
           div.onclick = () => loadFile(f.path);
           listEl.appendChild(div);
         });
+        rememberRepo(owner, repo, branch);
       } catch(e) {
         listEl.innerHTML = `<div class="error-text" style="padding:12px;">${e.message}</div>`;
       }
-    };
+    }
+
+    getEl('btn-load-repo').onclick = loadRepo;
+    renderRecents();
 
     async function loadFile(path) {
       const owner = getEl('repo-owner').value.trim();

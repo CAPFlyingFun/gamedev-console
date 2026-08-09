@@ -6,7 +6,8 @@ A fully client-side single-page PWA for prompting multiple AI agents (OpenAI + C
 
 - Entire app lives in `artifacts/gamedev-console/index.html` (embedded CSS + inline ES module script; user-mandated single-file constraint). The React scaffold in `src/` is unused.
 - Service worker is a separate file `artifacts/gamedev-console/public/sw.js` (browsers can't inline SWs); manifest + icon are inline data URIs. It derives its paths from its own scope rather than assuming the site root, because the app is served from `/gamedev-console/`. The app shell is network-first with the cache as the offline fallback; content-hashed bundles under `assets/` are cache-first, since their names change every build and a cached one cannot be stale. api.openai.com / api.anthropic.com / api.github.com are never intercepted.
-- API keys (openaiKey, claudeKey, githubToken) live only in localStorage; never hard-coded.
+- API keys (`openaiKey`, `claudeKey`, `githubKey`) live only in localStorage; never hard-coded.
+- `recentRepos` in localStorage holds the last 8 successfully-opened `{owner, repo, branch}` triples, newest first. It backs both the click-to-reload list and the owner/name datalists, and is written only after a tree actually loads — remembering on click would fill it with typos and repos the token can't reach.
 - CodeMirror 6 packages are installed as devDependencies and imported via bare imports in the inline module script (Vite resolves them).
 
 ## Run & Operate
