@@ -72,7 +72,13 @@ jobs:
             || { echo "bundle did not inline BASE_URL as ${BASE}"; exit 1; }
           echo "base path ${BASE} baked in correctly"
 
+      # `enablement` turns Pages on for the repo itself, so nobody has to go
+      # find the setting. It needs the repo to be eligible for Pages in the
+      # first place — public, or private on a paid plan — and says so plainly
+      # if it isn't.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
