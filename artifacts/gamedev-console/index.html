@@ -35,16 +35,6 @@
       grid-template-columns: 280px 1fr 400px;
       height: 100dvh;
     }
-    @media (max-width: 1000px) {
-      #app {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto 600px auto;
-        overflow-y: auto;
-      }
-      .panel { height: auto; border-right: none; border-bottom: 1px solid var(--panel-border); }
-      /* No horizontal scrolling on a phone — a cut-off plan is unreadable. */
-      .code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-    }
     .panel {
       display: flex; flex-direction: column;
       border-right: 1px solid var(--panel-border);
@@ -278,6 +268,40 @@
     ::-webkit-scrollbar-track { background: var(--bg); }
     ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+    /*
+     * MOBILE — this block must stay at the END of the stylesheet.
+     *
+     * A media query adds no specificity, so while this sat above `.panel` the
+     * later `height: 100dvh` won every time and none of these overrides ever
+     * applied. Each stacked panel stayed a full viewport tall inside a 600px
+     * grid row, overran the row by 65px, and the editor's commit bar came down
+     * on top of the prompt box.
+     */
+    @media (max-width: 1000px) {
+      /* Three columns become three stacked sections, so the page scrolls and
+       * the app stops being one screen tall. Left at 100dvh with the panels
+       * stacked, the three rows fight over a single viewport: the auto rows get
+       * squeezed to ~150px and `overflow: hidden` amputates whatever does not
+       * fit — the Execute Prompt button included. */
+      body { overflow: auto; }
+      #app {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(240px, 55vh) auto;
+        height: auto; min-height: 100dvh; overflow: visible;
+      }
+      /* Panels size to their content; only the editor is given a height, and a
+       * phone-sized one — 600px of mostly-empty editor is a whole screen to
+       * scroll past before reaching the prompt box you came to type in. */
+      .panel { height: auto; border-right: none; border-bottom: 1px solid var(--panel-border); }
+      #middle-panel { overflow: hidden; }
+      /* These scroll internally on the desktop layout because the panel bounds
+       * them. Unbounded, a big repo's tree or a long run would push everything
+       * below it off the bottom of the page. */
+      .file-list { max-height: 45vh; }
+      .responses-area { overflow-y: visible; }
+      /* No horizontal scrolling on a phone — a cut-off plan is unreadable. */
+      .code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    }
   </style>
 </head>
 <body>
