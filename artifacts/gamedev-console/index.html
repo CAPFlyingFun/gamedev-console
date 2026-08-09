@@ -232,6 +232,8 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     
     .error-text { color: var(--error); font-family: var(--font-mono); font-size: 11px; }
+    /* API failures now carry a paragraph of explanation — let it wrap. */
+    .error-text.wrap { white-space: pre-wrap; line-height: 1.45; margin-bottom: 8px; }
     
     /* Scrollbars */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -342,14 +344,15 @@
       <div class="section prompt-area">
         <div class="section-title">Plan &rarr; Merge &rarr; Code</div>
         <div class="input-group">
-          <input type="text" id="model-openai" value="gpt-4o-mini"
-                 title="ChatGPT — writes a plan" style="width:50%" />
-          <input type="text" id="model-claude" value="claude-opus-5"
-                 title="Claude — writes a plan, and writes the code" style="width:50%" />
+          <input type="text" id="model-openai" value="gpt-4o-mini" list="models-openai"
+                 autocomplete="off" title="ChatGPT — writes a plan" style="width:50%" />
+          <input type="text" id="model-claude" value="claude-opus-5" list="models-claude"
+                 autocomplete="off" title="Claude — writes a plan, and writes the code" style="width:50%" />
         </div>
         <div class="input-group">
-          <input type="text" id="model-master" value="gpt-4o"
-                 title="Master — merges both plans and assigns the work. Put a reasoning model here if your account has one." style="width:50%" />
+          <input type="text" id="model-master" value="gpt-4o" list="models-openai"
+                 autocomplete="off"
+                 title="Master — merges both plans and assigns the work. A reasoning model belongs here." style="width:50%" />
           <select id="coder-choice" style="width:50%" title="Who writes the code">
             <option value="claude">Claude codes</option>
             <option value="auto">Master decides</option>
@@ -357,6 +360,13 @@
             <option value="both">Both code</option>
           </select>
         </div>
+        <datalist id="models-openai"></datalist>
+        <datalist id="models-claude"></datalist>
+        <div class="ctx-row">
+          <button id="btn-models" title="Ask each provider which models your key can actually use">Load models</button>
+          <span id="models-note"></span>
+        </div>
+        <div id="models-error" class="error-text wrap" style="display:none;"></div>
         <label class="ctx-row">
           <input type="checkbox" id="send-file" checked />
           Send the open file as context
@@ -599,6 +609,104 @@
       }
       return res.json();
     }
+
+    // --- WHICH MODELS CAN THESE KEYS ACTUALLY USE? ---
+    /*
+     * Asked, not hard-coded. A list baked into the app is wrong twice over: it
+     * goes stale as models ship and retire (the Claude field shipped defaulting
+     * to a model that had been retired for months, and every call 404'd), and
+     * it can't know which models a given key is entitled to. Each provider
+     * publishes its own list, so ask them.
+     */
+    const MODEL_STORE = { openai: 'modelsOpenai', claude: 'modelsClaude' };
+
+    /* /v1/models returns everything the key can touch — embeddings, speech,
+     * images. Only chat-completions models belong in these fields. */
+    const CHAT_MODEL = /^(gpt-|o\d|chatgpt-)/i;
+    const NOT_CHAT = /(embed|tts|whisper|dall-e|audio|realtime|moderation|image|transcribe|instruct|davinci|babbage)/i;
+
+    async function fetchOpenAiModels() {
+      const key = localStorage.getItem('openaiKey');
+      if (!key) return null;
+      const res = await fetch('https://api.openai.com/v1/models', {
+        headers: { 'Authorization': `Bearer ${key}` },
+      });
+      if (!res.ok) throw apiError('OpenAI', res.status, await res.text());
+      const data = await res.json();
+      return (data.data || [])
+        .filter(m => CHAT_MODEL.test(m.id) && !NOT_CHAT.test(m.id))
+        .sort((a, b) => (b.created || 0) - (a.created || 0))   /* newest first */
+        .map(m => m.id);
+    }
+
+    async function fetchClaudeModels() {
+      const key = localStorage.getItem('claudeKey');
+      if (!key) return null;
+      const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+        headers: {
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+      });
+      if (!res.ok) throw apiError('Claude', res.status, await res.text());
+      const data = await res.json();
+      /* Every model here is a chat model — nothing to filter out. */
+      return (data.data || []).map(m => m.id);
+    }
+
+    function fillModelList(who, ids) {
+      const dl = getEl(`models-${who}`);
+      dl.innerHTML = '';
+      ids.forEach(id => {
+        const opt = document.createElement('option');
+        opt.value = id;
+        dl.appendChild(opt);
+      });
+    }
+
+    /* Remembered so the dropdowns are populated on the next visit without a
+     * request; "Load models" refreshes them. */
+    for (const [who, store] of Object.entries(MODEL_STORE)) {
+      try {
+        const ids = JSON.parse(localStorage.getItem(store) || '[]');
+        if (Array.isArray(ids) && ids.length) fillModelList(who, ids);
+      } catch { /* corrupt entry — the field still accepts typing */ }
+    }
+
+    getEl('btn-models').onclick = async () => {
+      const btn = getEl('btn-models');
+      const note = getEl('models-note');
+      const errBox = getEl('models-error');
+      const label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Loading...';
+      note.textContent = '';
+      errBox.style.display = 'none';
+      errBox.textContent = '';
+
+      const said = [];
+      const problems = [];
+      for (const [who, fetcher] of [['openai', fetchOpenAiModels], ['claude', fetchClaudeModels]]) {
+        try {
+          const ids = await fetcher();
+          if (ids === null) { said.push(`${who}: no key`); continue; }
+          fillModelList(who, ids);
+          localStorage.setItem(MODEL_STORE[who], JSON.stringify(ids));
+          said.push(`${who}: ${ids.length}`);
+        } catch (e) {
+          said.push(`${who}: failed`);
+          problems.push(e.message);
+        }
+      }
+      note.textContent = said.join('  ·  ');
+      if (problems.length) {
+        errBox.textContent = problems.join('\n\n');
+        errBox.style.display = 'block';
+      }
+      btn.disabled = false;
+      btn.textContent = label;
+    };
 
     // --- BROWSE AN OWNER'S REPOSITORIES ---
     /*
@@ -1010,6 +1118,43 @@
     }
 
     /*
+     * BOTH APIS REPORT FAILURE AS A JSON BODY, NOT AN EXCEPTION.
+     *
+     * Dumping that body raw is why "no credits purchased" read as an
+     * unexplained wall of JSON. The message is pulled out, and the codes worth
+     * translating get a sentence saying what to actually do — the quota one
+     * especially, because a saved card looks like billing is set up and it
+     * isn't the same thing as having a balance.
+     */
+    const API_HINT = {
+      insufficient_quota:
+        'That key works, but the project behind it has no credit balance. A saved payment '
+        + 'method is not the same thing — OpenAI spends from credits you buy up front. '
+        + 'Add a balance (or turn on auto-recharge) under Billing, and check it is the same '
+        + 'project this key belongs to.',
+      invalid_api_key: 'The key was rejected. Check it was pasted whole, with no trailing space.',
+      model_not_found: 'This key cannot see that model. Press "Load models" and pick one from the list.',
+      authentication_error: 'The key was rejected. Check it was pasted whole, with no trailing space.',
+      permission_error: 'That key is not allowed to use this model or endpoint.',
+      not_found_error: 'No such model for this key. Press "Load models" and pick one from the list.',
+      rate_limit_error: 'Rate limited — wait a moment and run it again.',
+    };
+
+    function apiError(provider, status, raw) {
+      let message = (raw || '').trim().slice(0, 400);
+      let code = '';
+      try {
+        const err = JSON.parse(raw).error || {};
+        message = err.message || message;
+        code = err.code || err.type || '';
+      } catch { /* not JSON — keep the raw text */ }
+      const hint = API_HINT[code];
+      return new Error(
+        `${provider} (${status}${code ? ` ${code}` : ''}): ${message}${hint ? `\n\n${hint}` : ''}`,
+      );
+    }
+
+    /*
      * `inlineSystem` folds the role instructions into the user turn instead of
      * sending a system message. OpenAI's reasoning models don't take the same
      * system role as the chat models, and the master step is exactly where you
@@ -1031,7 +1176,7 @@
         headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: use, messages })
       });
-      if (!res.ok) throw new Error(`OpenAI: ${await res.text()}`);
+      if (!res.ok) throw apiError('OpenAI', res.status, await res.text());
       const data = await res.json();
       return data.choices[0].message.content;
     }
@@ -1063,7 +1208,7 @@
           messages: [{role: 'user', content: prompt}]
         })
       });
-      if (!res.ok) throw new Error(`Claude: ${await res.text()}`);
+      if (!res.ok) throw apiError('Claude', res.status, await res.text());
       const data = await res.json();
       /* Thinking blocks can precede the text on current models. */
       const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
