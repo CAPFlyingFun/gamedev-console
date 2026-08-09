@@ -1,6 +1,13 @@
-# [Project name]
+# GameDev Console
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A fully client-side single-page PWA for prompting multiple AI agents (OpenAI + Claude + a Master synthesizer), browsing/editing GitHub repo files in a CodeMirror editor, previewing HTML games in a sandboxed iframe, and pushing commits back to GitHub — no backend.
+
+## Architecture notes
+
+- Entire app lives in `artifacts/gamedev-console/index.html` (embedded CSS + inline ES module script; user-mandated single-file constraint). The React scaffold in `src/` is unused.
+- Service worker is a separate file `artifacts/gamedev-console/public/sw.js` (browsers can't inline SWs); manifest + icon are inline data URIs. SW is cache-first for the app shell, network-only for api.openai.com / api.anthropic.com / api.github.com.
+- API keys (openaiKey, claudeKey, githubToken) live only in localStorage; never hard-coded.
+- CodeMirror 6 packages are installed as devDependencies and imported via bare imports in the inline module script (Vite resolves them).
 
 ## Run & Operate
 

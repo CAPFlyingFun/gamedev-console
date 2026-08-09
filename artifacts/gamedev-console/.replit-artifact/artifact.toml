@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "GameDev Console"
+description = "A client-side single-page PWA for creating, reviewing, and modifying code stored in GitHub repositories. Users store API keys locally, prompt OpenAI and Claude agents in parallel, get a merged Master critique, browse and edit repo files in a built-in code editor, preview HTML/JS game files in an iframe, and push commits back to GitHub — all without a backend."
+version = "1.0.0"
+id = "artifacts/gamedev-console"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24541
+
+[services.development]
+run = "pnpm --filter @workspace/gamedev-console run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/gamedev-console", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/gamedev-console/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24541"
+BASE_PATH = "/"
