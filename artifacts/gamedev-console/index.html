@@ -42,6 +42,8 @@
         overflow-y: auto;
       }
       .panel { height: auto; border-right: none; border-bottom: 1px solid var(--panel-border); }
+      /* No horizontal scrolling on a phone — a cut-off plan is unreadable. */
+      .code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; }
     }
     .panel {
       display: flex; flex-direction: column;
@@ -66,6 +68,12 @@
       transition: border-color 0.2s;
     }
     input:focus, textarea:focus { border-color: var(--accent); }
+    /*
+     * Inter has no glyph for the character iOS masks password fields with, so
+     * Safari fell back to its last-resort font and drew every character as a
+     * box with the codepoint inside. A system stack always has it.
+     */
+    input[type="password"] { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
     textarea { resize: vertical; min-height: 80px; }
     
     button {
@@ -77,11 +85,17 @@
     button:hover { background: var(--text-muted); color: #000; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     
+    .link-btn {
+      background: none; border: none; padding: 0; color: var(--text-muted);
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
+    }
+    .link-btn:hover { background: none; color: var(--accent); }
     .btn-primary { background: var(--accent); color: #000; font-weight: 600; }
     .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
     
     .input-group { display: flex; gap: 6px; margin-bottom: 8px; }
     .input-group input { margin-bottom: 0; }
+    .models-inline { width: 50%; }
     
     .key-row { margin-bottom: 8px; }
     .key-row label { display: flex; align-items: center; font-size: 11px; margin-bottom: 4px; color: var(--text-muted); }
@@ -196,9 +210,16 @@
     }
     .agent-card-header {
       padding: 6px 10px; font-size: 11px; font-weight: 600; border-bottom: 1px solid var(--panel-border);
-      display: flex; justify-content: space-between; align-items: center;
+      display: flex; align-items: center; gap: 6px;
       text-transform: uppercase; letter-spacing: 0.05em;
+      cursor: pointer; user-select: none;
     }
+    /* Status stays hard right; the caret and title group at the left. */
+    .agent-card-header > span:last-child { margin-left: auto; }
+    .agent-card-header::before { content: '▾'; font-size: 9px; opacity: 0.55; flex-shrink: 0; }
+    .agent-card.collapsed .agent-card-header::before { content: '▸'; }
+    .agent-card.collapsed .agent-card-header { border-bottom: none; }
+    .agent-card.collapsed .agent-card-content { display: none; }
     .agent-card-content { padding: 10px; font-size: 12px; line-height: 1.5; color: var(--text); overflow-x: hidden; }
     
     .master-card { border-color: var(--accent); box-shadow: 0 0 10px #00ffd022; }
@@ -219,13 +240,25 @@
       border-radius: 4px; outline: none; box-sizing: border-box;
     }
     
-    .code-block { margin: 8px 0; border: 1px solid var(--panel-border); border-radius: 4px; position: relative; background: #000; }
+    .code-block { margin: 8px 0; border: 1px solid var(--panel-border); border-radius: 4px; background: #000; }
     .code-block pre { margin: 0; padding: 10px; overflow-x: auto; font-family: var(--font-mono); font-size: 11px; color: #a6accd; }
-    .insert-btn {
-      position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 10px;
-      background: var(--panel); border: 1px solid var(--panel-border); opacity: 0.8;
+    /*
+     * A bar above the code rather than a button floating on top of it. Floated,
+     * it sat over the first line and hid whatever was under it — and a long
+     * line just scrolled beneath it, so no amount of padding helped.
+     */
+    .code-bar {
+      display: flex; justify-content: flex-end; gap: 4px;
+      padding: 4px 5px; background: var(--panel);
+      border-bottom: 1px solid var(--panel-border);
+      border-radius: 4px 4px 0 0;
     }
-    .insert-btn:hover { background: var(--accent); color: #000; opacity: 1; }
+    .code-bar button {
+      padding: 2px 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+      background: var(--bg); border: 1px solid var(--panel-border); color: var(--text-muted);
+    }
+    .code-bar button:hover { background: var(--accent); color: #000; }
+    .code-bar .replace-btn:hover { background: var(--success); color: #000; }
     
     .loader { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
     .loader::after { content: ""; width: 8px; height: 8px; border: 2px solid var(--accent); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
@@ -342,7 +375,11 @@
     <!-- RIGHT PANEL -->
     <div class="panel" id="right-panel">
       <div class="section prompt-area">
-        <div class="section-title">Plan &rarr; Merge &rarr; Code</div>
+        <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>Plan &rarr; Merge &rarr; Code</span>
+          <button id="btn-settings" class="link-btn" title="Model settings">Settings</button>
+        </div>
+        <div id="settings-body" style="display:none;">
         <div class="input-group">
           <input type="text" id="model-openai" value="gpt-4o-mini" list="models-openai"
                  autocomplete="off" title="ChatGPT — writes a plan" style="width:50%" />
@@ -353,20 +390,20 @@
           <input type="text" id="model-master" value="gpt-4o" list="models-openai"
                  autocomplete="off"
                  title="Master — merges both plans and assigns the work. A reasoning model belongs here." style="width:50%" />
-          <select id="coder-choice" style="width:50%" title="Who writes the code">
-            <option value="claude">Claude codes</option>
-            <option value="auto">Master decides</option>
-            <option value="chatgpt">ChatGPT codes</option>
-            <option value="both">Both code</option>
-          </select>
+          <button id="btn-models" class="models-inline"
+                  title="Ask each provider which models your key can actually use">Load models</button>
         </div>
         <datalist id="models-openai"></datalist>
         <datalist id="models-claude"></datalist>
-        <div class="ctx-row">
-          <button id="btn-models" title="Ask each provider which models your key can actually use">Load models</button>
-          <span id="models-note"></span>
-        </div>
+        <div class="ctx-row"><span id="models-note"></span></div>
         <div id="models-error" class="error-text wrap" style="display:none;"></div>
+        </div>
+        <select id="coder-choice" title="Who writes the code">
+          <option value="claude">Claude codes</option>
+          <option value="auto">Master decides</option>
+          <option value="chatgpt">ChatGPT codes</option>
+          <option value="both">Both code</option>
+        </select>
         <label class="ctx-row">
           <input type="checkbox" id="send-file" checked />
           Send the open file as context
@@ -508,19 +545,30 @@
     setInterval(checkForUpdate, 10 * 60 * 1000);
 
     // --- KEY MANAGER ---
+    const KEY_PLACEHOLDER = { openai: 'sk-...', claude: 'sk-ant-...', github: 'ghp_...' };
+
+    /*
+     * A saved key leaves the box EMPTY with the state said in the placeholder,
+     * rather than eight asterisks masked by the browser. The dot already says
+     * whether a key is stored, and the asterisks were actively harmful on iOS:
+     * Inter has no glyph for the character Safari masks with, so each one
+     * rendered as a last-resort box with its codepoint printed inside.
+     */
     function updateKeyStatus() {
       ['openai', 'claude', 'github'].forEach(k => {
         const hasKey = !!localStorage.getItem(`${k}Key`);
         const dot = getEl(`status-${k}`);
         dot.className = `status-dot ${hasKey ? 'set' : 'unset'}`;
-        getEl(`input-${k}`).value = hasKey ? '********' : '';
+        const field = getEl(`input-${k}`);
+        field.value = '';
+        field.placeholder = hasKey ? 'saved — type a new key to replace' : KEY_PLACEHOLDER[k];
       });
     }
 
     ['openai', 'claude', 'github'].forEach(k => {
       getEl(`btn-save-${k}`).onclick = () => {
-        const val = getEl(`input-${k}`).value;
-        if (val && val !== '********') {
+        const val = getEl(`input-${k}`).value.trim();
+        if (val) {
           localStorage.setItem(`${k}Key`, val);
           /* A new token may belong to a different account, so the remembered
            * login and the repository list it produced are no longer trustworthy. */
@@ -673,6 +721,23 @@
         if (Array.isArray(ids) && ids.length) fillModelList(who, ids);
       } catch { /* corrupt entry — the field still accepts typing */ }
     }
+
+    /*
+     * The model fields are set once and then left alone, so they sit behind a
+     * disclosure — on a phone they were most of the panel. Whether it is open
+     * is remembered, because someone tuning models wants it to stay put.
+     */
+    const settingsBody = getEl('settings-body');
+    const applySettings = (open) => {
+      settingsBody.style.display = open ? 'block' : 'none';
+      getEl('btn-settings').textContent = open ? 'Hide' : 'Settings';
+    };
+    applySettings(localStorage.getItem('settingsOpen') === '1');
+    getEl('btn-settings').onclick = () => {
+      const open = settingsBody.style.display === 'none';
+      localStorage.setItem('settingsOpen', open ? '1' : '0');
+      applySettings(open);
+    };
 
     getEl('btn-models').onclick = async () => {
       const btn = getEl('btn-models');
@@ -1093,19 +1158,37 @@
           
           const wrapper = document.createElement('div');
           wrapper.className = 'code-block';
-          
+
           const pre = document.createElement('pre');
           pre.textContent = code;
-          
+
+          const bar = document.createElement('div');
+          bar.className = 'code-bar';
+          // Safely encode code for the inline onclick handler
+          const b64 = btoa(unescape(encodeURIComponent(code)));
+
+          /*
+           * REPLACE, because INSERT alone is a trap on a whole-file answer: it
+           * pastes at the cursor, so a full rewrite lands inside the file it
+           * was meant to replace and you commit both copies. Insert is still
+           * right for a snippet, so both are offered rather than one changed.
+           */
+          const rep = document.createElement('button');
+          rep.className = 'replace-btn';
+          rep.textContent = 'REPLACE FILE';
+          rep.title = 'Replace the whole editor contents with this block';
+          rep.setAttribute('onclick', `replaceEditor('${b64}')`);
+
           const btn = document.createElement('button');
           btn.className = 'insert-btn';
           btn.textContent = 'INSERT';
-          // Safely encode code for the inline onclick handler
-          const b64 = btoa(unescape(encodeURIComponent(code)));
+          btn.title = 'Paste this block at the cursor';
           btn.setAttribute('onclick', `insertToEditor('${b64}')`);
-          
+
+          bar.appendChild(rep);
+          bar.appendChild(btn);
+          wrapper.appendChild(bar);
           wrapper.appendChild(pre);
-          wrapper.appendChild(btn);
           container.appendChild(wrapper);
         } else if (part.trim()) {
           const p = document.createElement('div');
@@ -1284,8 +1367,29 @@ deliverable.`,
     getEl('model-claude').oninput = syncModelLabels;
     syncModelLabels();
 
+    const CARDS = ['openai', 'claude', 'master', 'code-claude', 'code-openai'];
+
     const show = (id, on) => { getEl(`card-${id}`).style.display = on ? 'flex' : 'none'; };
     const busy = (id) => { getEl(`${id}-status`).innerHTML = '<span class="loader"></span>'; };
+
+    /*
+     * A finished stage folds up when the next one starts. Five open cards put
+     * the code — the thing you came for — below a screen of working notes you
+     * have already read. Nothing is hidden: the header stays, and clicking it
+     * opens the card again.
+     *
+     * A FAILED stage is never folded. Its message is the reason the run went
+     * the way it did, and it is the one card worth reading in full.
+     */
+    const setCollapsed = (id, on) => getEl(`card-${id}`).classList.toggle('collapsed', on);
+    const foldIfDone = (id) => {
+      if (getEl(`${id}-status`).textContent === 'DONE') setCollapsed(id, true);
+    };
+
+    CARDS.forEach(id => {
+      getEl(`card-${id}`).querySelector('.agent-card-header').onclick =
+        () => getEl(`card-${id}`).classList.toggle('collapsed');
+    });
     const done = (id, txt) => {
       getEl(`${id}-status`).textContent = 'DONE';
       renderMarkdown(txt, `content-${id}`);
@@ -1303,8 +1407,11 @@ deliverable.`,
       btn.disabled = true;
       btn.textContent = 'Planning...';
 
-      const cards = ['openai', 'claude', 'master', 'code-claude', 'code-openai'];
-      cards.forEach(id => { show(id, false); getEl(`content-${id}`).innerHTML = ''; });
+      CARDS.forEach(id => {
+        show(id, false);
+        setCollapsed(id, false);
+        getEl(`content-${id}`).innerHTML = '';
+      });
 
       const task = `TASK:\n${prompt}${buildContext()}`;
 
@@ -1322,6 +1429,8 @@ deliverable.`,
         if (!planOAI && !planClaude) throw new Error('Both planners failed — nothing to merge.');
 
         /* 2. The master merges them into one plan and names an assignee. */
+        foldIfDone('openai');
+        foldIfDone('claude');
         btn.textContent = 'Merging...';
         show('master', true); busy('master');
         const masterModel = getEl('model-master').value.trim() || 'gpt-4o';
@@ -1344,6 +1453,7 @@ deliverable.`,
         const brief = `${task}\n\nAPPROVED PLAN — implement this:\n${plan}`;
 
         btn.textContent = 'Coding...';
+        foldIfDone('master');
         const jobs = [];
         if (who === 'claude' || who === 'both') {
           show('code-claude', true); busy('code-claude');
