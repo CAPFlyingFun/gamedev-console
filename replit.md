@@ -5,7 +5,7 @@ A fully client-side single-page PWA for prompting multiple AI agents (OpenAI + C
 ## Architecture notes
 
 - Entire app lives in `artifacts/gamedev-console/index.html` (embedded CSS + inline ES module script; user-mandated single-file constraint). The React scaffold in `src/` is unused.
-- Service worker is a separate file `artifacts/gamedev-console/public/sw.js` (browsers can't inline SWs); manifest + icon are inline data URIs. SW is cache-first for the app shell, network-only for api.openai.com / api.anthropic.com / api.github.com.
+- Service worker is a separate file `artifacts/gamedev-console/public/sw.js` (browsers can't inline SWs); manifest + icon are inline data URIs. It derives its paths from its own scope rather than assuming the site root, because the app is served from `/gamedev-console/`. The app shell is network-first with the cache as the offline fallback; content-hashed bundles under `assets/` are cache-first, since their names change every build and a cached one cannot be stale. api.openai.com / api.anthropic.com / api.github.com are never intercepted.
 - API keys (openaiKey, claudeKey, githubToken) live only in localStorage; never hard-coded.
 - CodeMirror 6 packages are installed as devDependencies and imported via bare imports in the inline module script (Vite resolves them).
 
@@ -45,7 +45,14 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- The console's build needs **two** environment variables or it fails: `BASE_PATH`
+  (Vite bakes asset URLs in at build time, and the app is served from a subpath,
+  not the site root) and `PORT` (`vite.config.ts` throws without it even for a
+  build that never starts a server). CI sets both — see
+  `.github/workflows/deploy-console.yml`.
+- Building with the wrong `BASE_PATH` produces a page that looks fine locally and
+  404s every script once deployed. The workflow asserts the built `index.html`
+  and bundle actually carry the expected path before it uploads anything.
 
 ## Pointers
 
