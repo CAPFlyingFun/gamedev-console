@@ -89,6 +89,27 @@
     .status-dot.set { background: var(--success); box-shadow: 0 0 6px var(--success); }
     .status-dot.unset { background: var(--error); box-shadow: 0 0 6px var(--error); }
     
+    .picker { margin: 2px 0 6px; }
+    .picker input { margin-bottom: 4px; }
+    /* Capped so a long repo list can't push the file tree off the panel. */
+    .picker-list {
+      max-height: 190px; overflow-y: auto;
+      border: 1px solid var(--panel-border); border-radius: 4px;
+      background: var(--bg);
+    }
+    .picker-item {
+      display: flex; align-items: baseline; gap: 6px; padding: 5px 7px;
+      cursor: pointer; font-family: var(--font-mono); font-size: 11px;
+      color: var(--text-muted); border-bottom: 1px solid var(--panel-border);
+    }
+    .picker-item:last-child { border-bottom: none; }
+    .picker-item:hover { background: var(--panel); color: var(--text); }
+    .picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .picker-tag { flex-shrink: 0; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .picker-tag.private { color: var(--error); opacity: 0.75; }
+    .picker-tag.branch { color: var(--accent); opacity: 0.6; }
+    .picker-empty { padding: 8px; font-size: 11px; color: var(--text-muted); }
+
     .recents { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
     .recent-item {
       display: flex; align-items: center; gap: 6px; padding: 4px 6px;
@@ -253,16 +274,25 @@
       
       <div class="section">
         <div class="section-title">Repository</div>
-        <input type="text" id="repo-owner" placeholder="Owner (e.g. torvalds)"
-               list="recent-owners" autocomplete="off" />
-        <datalist id="recent-owners"></datalist>
-        <input type="text" id="repo-name" placeholder="Repo (e.g. linux)"
+        <div class="input-group">
+          <input type="text" id="repo-owner" placeholder="Owner (e.g. torvalds)"
+                 list="recent-owners" autocomplete="off" />
+          <datalist id="recent-owners"></datalist>
+          <button id="btn-browse" title="List this owner's repositories">Browse</button>
+        </div>
+        <input type="text" id="repo-name" placeholder="Repo (optional — or pick one from Browse)"
                list="recent-names" autocomplete="off" />
         <datalist id="recent-names"></datalist>
         <div class="input-group">
           <input type="text" id="repo-branch" value="main" placeholder="Branch" />
           <button id="btn-load-repo" class="btn-primary">Load</button>
         </div>
+
+        <div class="picker" id="repo-picker" style="display:none;">
+          <input type="text" id="repo-filter" placeholder="Filter repositories..." autocomplete="off" />
+          <div class="picker-list" id="repo-picker-list"></div>
+        </div>
+
         <div class="recents" id="recents"></div>
       </div>
       
@@ -482,11 +512,15 @@
         const val = getEl(`input-${k}`).value;
         if (val && val !== '********') {
           localStorage.setItem(`${k}Key`, val);
+          /* A new token may belong to a different account, so the remembered
+           * login and the repository list it produced are no longer trustworthy. */
+          if (k === 'github') { localStorage.removeItem('githubLogin'); repoCache = { owner: null, list: [] }; }
           updateKeyStatus();
         }
       };
       getEl(`btn-clear-${k}`).onclick = () => {
         localStorage.removeItem(`${k}Key`);
+        if (k === 'github') { localStorage.removeItem('githubLogin'); repoCache = { owner: null, list: [] }; }
         updateKeyStatus();
       };
     });
@@ -565,6 +599,173 @@
       }
       return res.json();
     }
+
+    // --- BROWSE AN OWNER'S REPOSITORIES ---
+    /*
+     * Which endpoint lists an owner's repositories depends on who the owner is
+     * relative to the token, and the differences are not cosmetic — the wrong
+     * one silently omits every private repository:
+     *
+     *   your own account -> /user/repos, the only route that returns yours
+     *   an organisation  -> /orgs/{owner}/repos, which includes private repos
+     *                       the token can see
+     *   anyone else      -> /users/{owner}/repos, public only
+     *
+     * There is no way to tell an org from a user by name, so the org route is
+     * tried first for anything that isn't you and 404 means "not an org".
+     */
+    let repoCache = { owner: null, list: [] };
+
+    /** The token's own login, asked once and remembered. */
+    async function whoAmI() {
+      const known = localStorage.getItem('githubLogin');
+      if (known) return known;
+      const me = await apiGH('/user');
+      if (me.login) localStorage.setItem('githubLogin', me.login);
+      return me.login || '';
+    }
+
+    async function pagedRepos(path) {
+      const all = [];
+      /* Five pages of 100 is more repositories than anyone browses by eye;
+       * the cap stops a huge org from hanging the panel. */
+      for (let page = 1; page <= 5; page += 1) {
+        const sep = path.includes('?') ? '&' : '?';
+        const batch = await apiGH(`${path}${sep}per_page=100&page=${page}`);
+        if (!Array.isArray(batch) || batch.length === 0) break;
+        all.push(...batch);
+        if (batch.length < 100) break;
+      }
+      return all;
+    }
+
+    async function listRepos(owner) {
+      const me = await whoAmI();
+      if (me && owner.toLowerCase() === me.toLowerCase()) {
+        return pagedRepos('/user/repos?affiliation=owner&sort=updated');
+      }
+      try {
+        return await pagedRepos(`/orgs/${owner}/repos?sort=updated`);
+      } catch {
+        return pagedRepos(`/users/${owner}/repos?sort=updated`);
+      }
+    }
+
+    function renderRepoPicker(filterText) {
+      const list = getEl('repo-picker-list');
+      const needle = (filterText || '').trim().toLowerCase();
+      const shown = repoCache.list.filter(r => !needle || r.name.toLowerCase().includes(needle));
+      list.innerHTML = '';
+      if (shown.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'picker-empty';
+        empty.textContent = repoCache.list.length
+          ? 'No repository matches that filter.'
+          : 'No repositories found for this owner.';
+        list.appendChild(empty);
+        return;
+      }
+      shown.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'picker-item';
+        row.title = `${repoCache.owner}/${r.name} @ ${r.branch}`;
+
+        const name = document.createElement('span');
+        name.className = 'picker-name';
+        name.textContent = r.name;
+        row.appendChild(name);
+
+        if (r.private) {
+          const tag = document.createElement('span');
+          tag.className = 'picker-tag private';
+          tag.textContent = 'private';
+          row.appendChild(tag);
+        }
+        /* Only when it ISN'T main — a label every row carries is noise, and the
+         * one that matters is the repo still on master. Full detail is on the
+         * row's title either way. */
+        if (r.branch !== 'main') {
+          const br = document.createElement('span');
+          br.className = 'picker-tag branch';
+          br.textContent = r.branch;
+          row.appendChild(br);
+        }
+
+        row.onclick = () => {
+          getEl('repo-name').value = r.name;
+          /* The repository's OWN default branch, not the "main" the field was
+           * pre-filled with — plenty of repos still call it master. */
+          getEl('repo-branch').value = r.branch;
+          getEl('repo-picker').style.display = 'none';
+          loadRepo();
+        };
+        list.appendChild(row);
+      });
+    }
+
+    async function browseOwner() {
+      const box = getEl('repo-picker');
+      if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+
+      const btn = getEl('btn-browse');
+      const label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        /* An empty owner means "mine" — the common case, so don't demand it. */
+        let owner = getEl('repo-owner').value.trim();
+        if (!owner) {
+          owner = await whoAmI();
+          if (!owner) throw new Error('No owner given, and the token has no login.');
+          getEl('repo-owner').value = owner;
+        }
+
+        if (repoCache.owner !== owner) {
+          const raw = await listRepos(owner);
+          repoCache = {
+            owner,
+            list: raw.map(r => ({
+              name: r.name,
+              branch: r.default_branch || 'main',
+              private: !!r.private,
+            })),
+          };
+        }
+        getEl('repo-filter').value = '';
+        renderRepoPicker('');
+        box.style.display = 'block';
+        getEl('repo-filter').focus();
+      } catch (e) {
+        getEl('file-list').innerHTML =
+          `<div class="error-text" style="padding:12px;">${e.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+    }
+
+    getEl('btn-browse').onclick = browseOwner;
+
+    /*
+     * Your own account is the owner you want nearly every time, so fill it in
+     * rather than making you type it. Only when the field is empty — a value
+     * you left there is yours, not something to overwrite.
+     */
+    (async () => {
+      try {
+        if (getEl('repo-owner').value.trim()) return;
+        if (!localStorage.getItem('githubKey')) return;
+        const me = await whoAmI();
+        if (me && !getEl('repo-owner').value.trim()) getEl('repo-owner').value = me;
+      } catch {
+        /* Bad or missing token — the field just stays empty. */
+      }
+    })();
+
+    getEl('repo-filter').oninput = (e) => renderRepoPicker(e.target.value);
+    getEl('repo-filter').onkeydown = (e) => {
+      if (e.key === 'Escape') getEl('repo-picker').style.display = 'none';
+    };
 
     // --- RECENTLY OPENED ---
     const RECENTS_KEY = 'recentRepos';
