@@ -36,10 +36,18 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # The whole workspace, because the console depends on a sibling package
-      # (@workspace/api-client-react) that a filtered install would not fetch.
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      # This was dead for the life of the repo: tsconfig's `include` pointed at
+      # a React app that index.html never imported, so tsc compiled 63 unused
+      # files and never once looked at the page that actually ships. It points
+      # at real code now, which is only worth anything if CI runs it.
+      - name: Typecheck
+        env:
+          PORT: '5173'
+          BASE_PATH: '/'
+        run: pnpm --filter @workspace/gamedev-console run typecheck
 
       # A project Pages site is served from /<repo>/, and Vite has to be told
       # so at BUILD time — the asset URLs are baked into index.html and cannot

@@ -1,11 +1,7 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, type Plugin } from 'vite';
-
-import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
 /*
  * THE BUILD STAMP.
@@ -85,37 +81,11 @@ export default defineConfig({
   define: {
     __BUILD_STAMP__: JSON.stringify(STAMP),
   },
-  plugins: [
-    emitVersionFile(),
-    react(),
-    tailwindcss(),
-    runtimeErrorOverlay(),
-    ...(process.env.NODE_ENV !== 'production' &&
-    process.env.REPL_ID !== undefined
-      ? [
-          await import('@replit/vite-plugin-cartographer').then((m) =>
-            m.cartographer({
-              root: path.resolve(import.meta.dirname, '..'),
-            }),
-          ),
-          await import('@replit/vite-plugin-dev-banner').then((m) =>
-            m.devBanner(),
-          ),
-        ]
-      : []),
-  ],
-  resolve: {
-    alias: {
-      '@': path.resolve(import.meta.dirname, 'src'),
-      '@assets': path.resolve(
-        import.meta.dirname,
-        '..',
-        '..',
-        'attached_assets',
-      ),
-    },
-    dedupe: ['react', 'react-dom'],
-  },
+  /*
+   * The page is one HTML file with an inline module. The only reason a bundler
+   * is here at all is that the module imports CodeMirror by package name.
+   */
+  plugins: [emitVersionFile()],
   root: path.resolve(import.meta.dirname),
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
