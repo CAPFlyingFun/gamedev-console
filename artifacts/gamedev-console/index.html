@@ -519,7 +519,43 @@
     
     // --- UTILS ---
     const getEl = id => document.getElementById(id);
+
+    /*
+     * Each segment separately: a path is escaped, but its slashes are
+     * structure, not content. Unescaped, a `#` truncates the URL at the
+     * fragment and a `+` silently becomes a space.
+     */
+    const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
     
+    /*
+     * WHAT IS NOT TEXT.
+     *
+     * The file list shows every blob in the tree, so a 6 MB normal map is one
+     * tap away from the editor. Decoded as UTF-8 it becomes replacement
+     * characters, and committing that back silently destroys the asset. There
+     * is no version of "open a PNG in CodeMirror" worth having, so these are
+     * refused at the door rather than mangled.
+     */
+    const BINARY_EXT = new RegExp('\\.(png|jpe?g|gif|webp|avif|bmp|ico|icns|tiff?|' +
+      'hdr|exr|ktx2?|basis|dds|glb|gltf|fbx|obj|blend|bin|wasm|' +
+      'mp3|wav|ogg|m4a|flac|mp4|webm|mov|avi|' +
+      'woff2?|ttf|otf|eot|zip|gz|tgz|bz2|xz|7z|rar|pdf|db|sqlite3?)$', 'i');
+    const isBinaryPath = p => BINARY_EXT.test(p);
+
+    /*
+     * GitHub's contents API stops returning content at 1 MB: the response is
+     * still 200, still carries a valid sha, but arrives as content:"" with
+     * encoding:"none". atob('') is '', so the editor showed an empty document
+     * for a file that was fine — and Push Commit then wrote that emptiness
+     * back over it with a sha the API accepted. Twenty-two files across the
+     * two game repos are over that line.
+     *
+     * The blobs endpoint carries the same content to 100 MB, so reads go
+     * through it, and anything that is not base64 is refused rather than
+     * decoded into a plausible-looking nothing.
+     */
+    const MAX_EDITABLE_BYTES = 2 * 1024 * 1024;
+
     // GitHub API requires strict base64 encoding/decoding of UTF-8 text
     function decodeB64UTF8(b64) {
       const binString = atob(b64.replace(/\n/g, ''));
@@ -666,6 +702,25 @@
         editorView.focus();
       } catch(e) {
         console.error("Failed to insert code", e);
+      }
+    };
+
+    /*
+     * The other half of the pair above. REPLACE FILE has been on every code
+     * block since it shipped and has thrown ReferenceError on every click,
+     * because only the insert half was ever written — which left the exact
+     * trap the REPLACE button exists to avoid as the only thing you could do.
+     */
+    window.replaceEditor = function(codeB64) {
+      try {
+        const code = decodeURIComponent(escape(atob(codeB64)));
+        editorView.dispatch(editorView.state.update({
+          changes: { from: 0, to: editorView.state.doc.length, insert: code }
+        }));
+        editorView.focus();
+        if (currentFile.path.endsWith('.html')) updatePreview();
+      } catch(e) {
+        console.error("Failed to replace file contents", e);
       }
     };
 
@@ -1062,16 +1117,30 @@
       listEl.innerHTML = '<div class="loader" style="padding:12px;">Loading tree...</div>';
 
       try {
-        const data = await apiGH(`/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`);
-        if (data.truncated) console.warn("Tree truncated");
+        const data = await apiGH(`/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
         const files = data.tree.filter(t => t.type === 'blob');
         listEl.innerHTML = '';
+        /*
+         * A truncated tree is indistinguishable from a complete one once it is
+         * on screen, so it says so. As a console.warn this cost a real hour of
+         * looking for a file that the listing had simply stopped before.
+         */
+        if (data.truncated) {
+          const warn = document.createElement('div');
+          warn.className = 'error-text';
+          warn.style.cssText = 'padding:8px;font-size:11px;';
+          warn.textContent = 'Listing truncated by GitHub — some files are missing from this list.';
+          listEl.appendChild(warn);
+        }
         files.sort((a,b) => a.path.localeCompare(b.path)).forEach(f => {
           const div = document.createElement('div');
           div.className = 'file-item';
           div.textContent = f.path;
           div.title = f.path;
-          div.onclick = () => loadFile(f.path);
+          div.dataset.path = f.path;
+          if (isBinaryPath(f.path) || f.size > MAX_EDITABLE_BYTES) div.style.opacity = '0.55';
+          // sha and size come free with the tree; both reads below need them.
+          div.onclick = () => loadFile(f.path, { sha: f.sha, size: f.size });
           listEl.appendChild(div);
         });
         rememberRepo(owner, repo, branch);
@@ -1083,20 +1152,52 @@
     getEl('btn-load-repo').onclick = loadRepo;
     renderRecents();
 
-    async function loadFile(path) {
+    /*
+     * Refuse a file rather than open a fake version of it. `currentFile.sha`
+     * stays null so Push Commit cannot fire: a refusal that still armed the
+     * commit path would be the original bug wearing a warning label.
+     */
+    function refuseFile(path, why) {
+      currentFile = { path: '', sha: null, isNew: false };
+      getEl('current-file-path').textContent = `${path} — not editable`;
+      setEditorContent(`// ${path}\n//\n// ${why}\n//\n// This file is shown read-only and cannot be committed from here.\n`, '.txt');
+    }
+
+    async function loadFile(path, meta) {
       const owner = getEl('repo-owner').value.trim();
       const repo = getEl('repo-name').value.trim();
       const branch = getEl('repo-branch').value.trim() || 'main';
-      
+
       document.querySelectorAll('.file-item').forEach(el => {
-        el.classList.toggle('active', el.textContent === path);
+        el.classList.toggle('active', el.dataset.path === path);
       });
-      
+
+      if (isBinaryPath(path)) {
+        return refuseFile(path, 'Binary file. Opening it as text would corrupt it on commit.');
+      }
+      if (meta && meta.size > MAX_EDITABLE_BYTES) {
+        return refuseFile(path, `${(meta.size / 1048576).toFixed(1)} MB — too large to edit safely.`);
+      }
+
       getEl('current-file-path').textContent = `Loading ${path}...`;
       try {
-        const data = await apiGH(`/repos/${owner}/${repo}/contents/${path}?ref=${branch}`);
-        const content = decodeB64UTF8(data.content);
-        currentFile = { path: data.path, sha: data.sha, isNew: false };
+        /*
+         * By sha, not by path: the tree already gave us an immutable one, it
+         * needs no branch ref and no path escaping, and it is the endpoint
+         * that still returns content past 1 MB.
+         */
+        const sha = meta && meta.sha
+          ? meta.sha
+          : (await apiGH(`/repos/${owner}/${repo}/contents/${encodePath(path)}?ref=${encodeURIComponent(branch)}`)).sha;
+        const blob = await apiGH(`/repos/${owner}/${repo}/git/blobs/${sha}`);
+        if (blob.encoding !== 'base64') {
+          return refuseFile(path, `GitHub returned encoding "${blob.encoding}" rather than base64.`);
+        }
+        const content = decodeB64UTF8(blob.content);
+        if (content.includes('\u0000')) {
+          return refuseFile(path, 'Contains null bytes — this is binary despite its extension.');
+        }
+        currentFile = { path, sha, isNew: false };
         getEl('current-file-path').textContent = path;
         setEditorContent(content, path);
       } catch(e) {
@@ -1120,11 +1221,18 @@
       const message = getEl('commit-message').value.trim() || `Update ${currentFile.path}`;
       if (!owner || !repo || !currentFile.path) return alert('No active file/repo.');
       
+      if (isBinaryPath(currentFile.path)) {
+        return alert('Refusing to commit a binary file as text — it would be corrupted.');
+      }
+
       const content = editorView.state.doc.toString();
       const btn = getEl('btn-push-commit');
       btn.textContent = 'Pushing...';
       btn.disabled = true;
-      
+
+      // Read before the push clears it; the refresh below is its only reader.
+      const wasNew = currentFile.isNew;
+
       try {
         const body = {
           message,
@@ -1133,16 +1241,16 @@
         };
         if (currentFile.sha) body.sha = currentFile.sha;
         
-        const res = await apiGH(`/repos/${owner}/${repo}/contents/${currentFile.path}`, {
+        const res = await apiGH(`/repos/${owner}/${repo}/contents/${encodePath(currentFile.path)}`, {
           method: 'PUT',
           body: JSON.stringify(body)
         });
         currentFile.sha = res.content.sha;
         currentFile.isNew = false;
         getEl('current-file-path').textContent = currentFile.path;
-        
-        // Refresh file list if new file
-        if (currentFile.isNew) getEl('btn-load-repo').click();
+
+        // A new file is not in the listing yet, so the listing is refetched.
+        if (wasNew) getEl('btn-load-repo').click();
         
         alert(`Commit pushed successfully:\n${res.commit.html_url}`);
         getEl('commit-message').value = '';
