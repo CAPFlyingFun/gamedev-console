@@ -537,7 +537,7 @@
      * refused at the door rather than mangled.
      */
     const BINARY_EXT = new RegExp('\\.(png|jpe?g|gif|webp|avif|bmp|ico|icns|tiff?|' +
-      'hdr|exr|ktx2?|basis|dds|glb|gltf|fbx|obj|blend|bin|wasm|' +
+      'hdr|exr|ktx2?|basis|dds|glb|fbx|blend|bin|wasm|' +
       'mp3|wav|ogg|m4a|flac|mp4|webm|mov|avi|' +
       'woff2?|ttf|otf|eot|zip|gz|tgz|bz2|xz|7z|rar|pdf|db|sqlite3?)$', 'i');
     const isBinaryPath = p => BINARY_EXT.test(p);
@@ -1138,9 +1138,21 @@
           div.textContent = f.path;
           div.title = f.path;
           div.dataset.path = f.path;
+          /*
+           * The sha lives on the element rather than in this closure because a
+           * blob sha is immutable — which is what makes reading by it work, and
+           * also what makes the listing a SNAPSHOT. Push a file and the entry
+           * here still names the pre-commit blob, so re-opening it would serve
+           * the old content forever. On the element, the push handler can
+           * correct it in place.
+           */
+          div.dataset.sha = f.sha;
+          div.dataset.size = String(f.size ?? 0);
           if (isBinaryPath(f.path) || f.size > MAX_EDITABLE_BYTES) div.style.opacity = '0.55';
-          // sha and size come free with the tree; both reads below need them.
-          div.onclick = () => loadFile(f.path, { sha: f.sha, size: f.size });
+          div.onclick = () => loadFile(f.path, {
+            sha: div.dataset.sha,
+            size: Number(div.dataset.size),
+          });
           listEl.appendChild(div);
         });
         rememberRepo(owner, repo, branch);
@@ -1249,7 +1261,17 @@
         currentFile.isNew = false;
         getEl('current-file-path').textContent = currentFile.path;
 
-        // A new file is not in the listing yet, so the listing is refetched.
+        /*
+         * The listing still names the blob this file had BEFORE the commit.
+         * Left alone, tapping the file again reads that old blob — silently,
+         * because an immutable sha never 404s — and then the next push 409s
+         * against a sha that is now two revisions behind.
+         */
+        const row = document.querySelector(
+          `.file-item[data-path="${CSS.escape(currentFile.path)}"]`);
+        if (row) row.dataset.sha = res.content.sha;
+
+        // A new file has no row to correct, so the listing is refetched.
         if (wasNew) getEl('btn-load-repo').click();
         
         alert(`Commit pushed successfully:\n${res.commit.html_url}`);

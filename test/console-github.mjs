@@ -20,6 +20,10 @@ const TREE = [
   { type: 'blob', path: 'public/water.png',  sha: 'sha-png',  size: 900 },      // small, but binary
   { type: 'blob', path: 'src/we#ird+file.ts',sha: 'sha-odd',  size: 40 },
   { type: 'blob', path: 'a b&c.md',          sha: 'sha-sp',   size: 20 },
+  // Small enough to pass the size gate, so the encoding guard is what has to
+  // catch it. Without this row that guard is never executed by the suite.
+  { type: 'blob', path: 'src/weird.ts',      sha: 'sha-noenc',size: 40 },
+  { type: 'blob', path: 'models/scene.gltf', sha: 'sha-gltf', size: 40 },  // JSON, not binary
 ];
 
 const results = [];
@@ -46,6 +50,7 @@ await ctx.route('https://api.github.com/**', async route => {
   if (u.pathname.includes('/git/trees/')) return json({ truncated: true, tree: TREE });
   // The shape that caused the loss: 200, a valid sha, and no content.
   if (u.pathname.includes('/git/blobs/sha-huge')) return json({ encoding: 'none', content: '' });
+  if (u.pathname.includes('/git/blobs/sha-noenc')) return json({ encoding: 'none', content: '' });
   if (u.pathname.includes('/git/blobs/')) return json({ encoding: 'base64', content: btoa('hello\n') });
   return json({});
 });
@@ -118,6 +123,14 @@ check('reads never touch the contents API',
 check('a path with # and + opens',
   (await open('src/we#ird+file.ts')) === 'src/we#ird+file.ts');
 
+check('a blob returned with encoding != base64 is refused',
+  /not editable/.test(await open('src/weird.ts')),
+  'reaches the guard the size gate would otherwise short-circuit');
+
+check('.gltf opens — it is JSON, and the null-byte check covers one that lies',
+  (await open('models/scene.gltf')) === 'models/scene.gltf',
+  'the extension list guards genuinely binary formats, not text ones that sit near them');
+
 await open('a b&c.md');
 await page.evaluate(() => { document.getElementById('commit-message').value = 'test'; });
 await page.click('#btn-push-commit');
@@ -125,6 +138,21 @@ await page.waitForTimeout(500);
 check('a pushed path is URI-encoded per segment',
   puts.some(p => p.path.endsWith('/contents/a%20b%26c.md')),
   puts.map(p => p.path).join(', '));
+
+// --- the regression the adversarial review caught -----------------------
+// Reading by the tree's sha makes the listing a snapshot. Before the fix,
+// re-opening a file after pushing it served the pre-commit blob forever.
+const shaBefore = await page.evaluate(() =>
+  document.querySelector('.file-item[data-path="src/ok.ts"]')?.dataset.sha);
+await open('src/ok.ts');
+await page.evaluate(() => { document.getElementById('commit-message').value = 'x'; });
+await page.click('#btn-push-commit');
+await page.waitForTimeout(500);
+const shaAfter = await page.evaluate(() =>
+  document.querySelector('.file-item[data-path="src/ok.ts"]')?.dataset.sha);
+check('the listing sha is corrected after a push, so a re-open is not stale',
+  shaBefore === 'sha-ok' && shaAfter === 'sha-new',
+  `before=${shaBefore} after=${shaAfter}`);
 
 await browser.close();
 
