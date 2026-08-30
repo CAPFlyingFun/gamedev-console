@@ -2,7 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+  <!--
+    maximum-scale=1 was here to stop iOS zooming in when a field takes focus,
+    but that zoom is triggered by a font-size under 16px — which the inputs
+    now have. Blocking pinch-zoom outright cost the ability to zoom in on
+    small text and gave nothing back once the real cause was fixed.
+    viewport-fit=cover is what makes env(safe-area-inset-*) report real values.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>GameDev Console</title>
   <meta name="description" content="A focused developer cockpit for prompting AI, reviewing code, and pushing to GitHub." />
   <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22GameDev%20Console%22%2C%22display%22%3A%22standalone%22%2C%22theme_color%22%3A%22%2309090b%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg%2520xmlns%253D%2522http%253A%252F%252Fwww.w3.org%252F2000%252Fsvg%2522%2520viewBox%253D%25220%25200%2520100%2520100%2522%253E%253Crect%2520width%253D%2522100%2522%2520height%253D%2522100%2522%2520fill%253D%2522%252300ffd0%2522%252F%253E%253Cpath%2520d%253D%2522M20%252020%2520L80%252050%2520L20%252080%2520Z%2522%2520fill%253D%2522%252309090b%2522%252F%253E%253C%252Fsvg%253E%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D" />
@@ -277,30 +284,152 @@
      * grid row, overran the row by 65px, and the editor's commit bar came down
      * on top of the prompt box.
      */
+    /*
+     * The directory is clipped from ITS left (direction: rtl reverses which
+     * end the ellipsis lands on); the filename is never allowed to shrink.
+     * unicode-bidi keeps the slashes in the order they were written.
+     */
+    .file-item { display: flex; align-items: baseline; gap: 0; }
+    .fi-dir {
+      flex: 0 1 auto; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      direction: rtl; unicode-bidi: plaintext; text-align: left;
+      opacity: 0.55;
+    }
+    .fi-name { flex: 0 0 auto; white-space: nowrap; }
+    #file-filter { margin-bottom: 0; }
+    .file-item[hidden] { display: none; }
+
+    /* ---- Foldable config sections ---- */
+    .fold-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      width: 100%; background: none; border: none; padding: 0; margin-bottom: 8px;
+      cursor: pointer; text-align: left;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--text-muted); font-weight: 600;
+    }
+    .fold-head:hover { background: none; color: var(--text); }
+    .fold-head::before { content: '▾'; font-size: 9px; opacity: 0.55; }
+    .fold-head > span:first-of-type { margin-right: auto; }
+    .foldable.folded .fold-head::before { content: '▸'; }
+    .foldable.folded .fold-head { margin-bottom: 0; }
+    .foldable.folded .fold-body { display: none; }
+    .fold-summary {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0;
+      text-transform: none; color: var(--text-muted); opacity: 0.9;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%;
+    }
+    .fold-summary .ok { color: var(--success); }
+    .fold-summary .missing { color: var(--error); }
+
+    /* ---- The bottom tab bar. Desktop keeps its three columns. ---- */
+    #tabbar { display: none; }
+
+    /*
+     * MOBILE — this block must stay at the END of the stylesheet.
+     *
+     * A media query adds no specificity, so while this sat above `.panel` the
+     * later `height: 100dvh` won every time and none of these overrides ever
+     * applied. That is how the editor's commit bar came down on top of the
+     * prompt box.
+     */
     @media (max-width: 1000px) {
-      /* Three columns become three stacked sections, so the page scrolls and
-       * the app stops being one screen tall. Left at 100dvh with the panels
-       * stacked, the three rows fight over a single viewport: the auto rows get
-       * squeezed to ~150px and `overflow: hidden` amputates whatever does not
-       * fit — the Execute Prompt button included. */
-      body { overflow: auto; }
+      /*
+       * ONE PANEL AT A TIME, not three stacked.
+       *
+       * Stacking them made the page 1160px against an 844px viewport, so the
+       * API keys, the repo picker and the whole file list sat above the editor
+       * and you scrolled past all of it to reach code — every time. A phone has
+       * room for exactly one of these things, so it shows exactly one.
+       */
+      body { overflow: hidden; }
       #app {
         grid-template-columns: 1fr;
-        grid-template-rows: auto minmax(240px, 55vh) auto;
-        height: auto; min-height: 100dvh; overflow: visible;
+        grid-template-rows: 1fr;
+        /*
+         * The keyboard does not resize the layout viewport on iOS, so 100dvh
+         * stays full-screen and the bottom of the app goes under the keyboard.
+         * --kb is the visualViewport shortfall, published by the resize
+         * handler; WebKit has no interactive-widget support, so this is the
+         * only thing that actually works.
+         */
+        height: calc(100dvh - var(--kb, 0px));
+        min-height: 0; overflow: hidden;
       }
-      /* Panels size to their content; only the editor is given a height, and a
-       * phone-sized one — 600px of mostly-empty editor is a whole screen to
-       * scroll past before reaching the prompt box you came to type in. */
-      .panel { height: auto; border-right: none; border-bottom: 1px solid var(--panel-border); }
-      #middle-panel { overflow: hidden; }
-      /* These scroll internally on the desktop layout because the panel bounds
-       * them. Unbounded, a big repo's tree or a long run would push everything
-       * below it off the bottom of the page. */
-      .file-list { max-height: 45vh; }
-      .responses-area { overflow-y: visible; }
+      .panel {
+        height: auto; min-height: 0;
+        border-right: none; border-bottom: none;
+        grid-area: 1 / 1;            /* all three share the cell */
+        overflow: hidden;
+      }
+      /*
+       * !important because `hidden` has to beat every layout rule that will
+       * ever be written below it. It did not: `#left-panel, #right-panel {
+       * display: flex }` further down is an ID selector, so it outranked
+       * `.panel[hidden]` on specificity and the hidden panel stayed on screen,
+       * stacked over the visible one in the same grid cell, swallowing every
+       * tap meant for the panel underneath. Hidden is not a layout opinion.
+       */
+      .panel[hidden] { display: none !important; }
+
+      /* Room for the tab bar, plus the home indicator on a notched phone. */
+      #app { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)); box-sizing: border-box; }
+
+      #tabbar {
+        display: flex;
+        position: fixed; left: 0; right: 0;
+        bottom: var(--kb, 0px);
+        height: calc(56px + env(safe-area-inset-bottom, 0px));
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        background: var(--panel); border-top: 1px solid var(--panel-border);
+        z-index: 40;
+      }
+      .tabbar-btn {
+        flex: 1; background: none; border: none; border-radius: 0;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 2px; font-size: 11px; font-weight: 600; color: var(--text-muted);
+        letter-spacing: 0.04em; padding: 0; min-height: 44px;
+      }
+      .tabbar-btn:hover { background: none; color: var(--text-muted); }
+      .tabbar-btn .tabbar-glyph { font-size: 17px; line-height: 1; }
+      .tabbar-btn[aria-selected="true"] { color: var(--accent); background: #00ffd00d; }
+      .tabbar-btn .tabbar-dot {
+        position: absolute; top: 8px; margin-left: 22px;
+        width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+      }
+
+      /*
+       * 44px is Apple's minimum and the current build is at 28 — every control
+       * on the page is about two thirds of the size a thumb needs. 16px on the
+       * font is what stops iOS zooming the page when a field takes focus.
+       */
+      input, select, textarea, button {
+        font-size: 16px;
+        min-height: 44px;
+      }
+      button { padding: 10px 14px; }
+      .link-btn { min-height: 44px; padding: 0 6px; font-size: 12px; }
+      .fold-head { min-height: 44px; font-size: 11px; }
+      .fold-summary { font-size: 11px; }
+      .code-bar button { min-height: 36px; font-size: 12px; }
+      .tab-btn { min-height: 44px; }
+      .file-item { padding: 12px; font-size: 13px; min-height: 44px; box-sizing: border-box;
+                   display: flex; align-items: center; }
+      .picker-item, .recent-item { min-height: 44px; font-size: 13px; }
+      .status-dot { width: 8px; height: 8px; }
+
+      /* Each panel scrolls itself; the app no longer scrolls as a page. */
+      #left-panel, #right-panel { display: flex; flex-direction: column; overflow: hidden; }
+      #left-panel .section, #right-panel .section { flex-shrink: 0; }
+      .file-list { flex: 1; max-height: none; }
+      .responses-area { flex: 1; overflow-y: auto; }
+      .picker-list { max-height: 40vh; }
+
       /* No horizontal scrolling on a phone — a cut-off plan is unreadable. */
       .code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+      /* There is no hover on a phone, so an opacity:0 control is just missing. */
+      .recent-forget { opacity: 0.6; font-size: 20px; padding: 0 8px; min-height: 44px; }
     }
   </style>
 </head>
@@ -308,8 +437,11 @@
   <div id="app">
     <!-- LEFT PANEL -->
     <div class="panel" id="left-panel">
-      <div class="section">
-        <div class="section-title">API Keys</div>
+      <div class="section foldable" id="sec-keys">
+        <button class="section-title fold-head" data-fold="sec-keys" aria-expanded="true">
+          <span>API Keys</span><span class="fold-summary" id="keys-summary"></span>
+        </button>
+        <div class="fold-body">
         <div class="key-row">
           <label>OpenAI <span class="status-dot unset" id="status-openai"></span></label>
           <div class="input-group">
@@ -334,10 +466,14 @@
             <button id="btn-clear-github">Clear</button>
           </div>
         </div>
+        </div>
       </div>
-      
-      <div class="section">
-        <div class="section-title">Repository</div>
+
+      <div class="section foldable" id="sec-repo">
+        <button class="section-title fold-head" data-fold="sec-repo" aria-expanded="true">
+          <span>Repository</span><span class="fold-summary" id="repo-summary"></span>
+        </button>
+        <div class="fold-body">
         <div class="input-group">
           <input type="text" id="repo-owner" placeholder="Owner (e.g. torvalds)"
                  list="recent-owners" autocomplete="off" />
@@ -358,13 +494,18 @@
         </div>
 
         <div class="recents" id="recents"></div>
+        </div>
       </div>
       
       <div class="section" style="padding-bottom:0; border-bottom:none;">
         <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
           Files
-          <button id="btn-new-file" style="padding:2px 6px; font-size:10px;">+ New</button>
+          <button id="btn-new-file" class="link-btn">+ NEW</button>
         </div>
+        <!-- Thronemound is 300-odd files; scrolling to one on a phone is not a
+             navigation method. -->
+        <input id="file-filter" type="search" placeholder="Filter files"
+               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
       </div>
       <div class="file-list" id="file-list">
         <div style="padding: 12px; color: var(--text-muted); font-size: 11px;">No repository loaded.</div>
@@ -513,6 +654,119 @@
       });
     }
 
+    /* ==================== FOLDABLE CONFIG ====================
+     *
+     * API keys and the repo picker are set-once configuration, but they sat
+     * permanently above the file list — so on a phone the panel you use most
+     * opened onto two screens of settings. They fold, and they fold themselves
+     * the moment they are satisfied: keys present, repo loaded.
+     *
+     * The folded header still carries the state, because a collapsed section
+     * that says nothing is just a missing section.
+     */
+    function setFold(id, folded) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.toggle('folded', folded);
+      el.querySelector('.fold-head')?.setAttribute('aria-expanded', String(!folded));
+    }
+
+    document.querySelectorAll('.fold-head').forEach(h => {
+      h.addEventListener('click', () => {
+        const el = document.getElementById(h.dataset.fold);
+        setFold(h.dataset.fold, !el.classList.contains('folded'));
+      });
+    });
+
+    function refreshFoldSummaries() {
+      const have = k => !!localStorage.getItem(k);
+      const bits = [
+        ['OpenAI', have('openaiKey')], ['Claude', have('claudeKey')], ['GitHub', have('githubKey')],
+      ];
+      const el = document.getElementById('keys-summary');
+      if (el) {
+        el.innerHTML = bits
+          .map(([n, ok]) => `<span class="${ok ? 'ok' : 'missing'}">${ok ? '\u25CF' : '\u25CB'}\u2009${n}</span>`)
+          .join('  ');
+      }
+      const repoEl = document.getElementById('repo-summary');
+      if (repoEl) {
+        const o = getEl('repo-owner')?.value.trim(), r = getEl('repo-name')?.value.trim();
+        repoEl.textContent = o && r ? `${o}/${r}` : '';
+      }
+    }
+    window.refreshFoldSummaries = refreshFoldSummaries;
+
+    /* ==================== THE PHONE SHELL ====================
+     *
+     * Below 1000px the three columns become three full-screen panels with a
+     * tab bar, because a phone has room for one of them at a time. Above it,
+     * nothing here does anything: all three panels stay visible and the tab
+     * bar is display:none.
+     */
+    const MOBILE = window.matchMedia('(max-width: 1000px)');
+    const PANELS = ['left-panel', 'middle-panel', 'right-panel'];
+    let activePanel = 'left-panel';
+
+    function applyPanels() {
+      const phone = MOBILE.matches;
+      PANELS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.hidden = phone && id !== activePanel;
+      });
+      document.querySelectorAll('.tabbar-btn').forEach(b => {
+        b.setAttribute('aria-selected', String(b.dataset.panel === activePanel));
+      });
+    }
+
+    function showPanel(id) {
+      if (!PANELS.includes(id)) return;
+      activePanel = id;
+      applyPanels();
+      /*
+       * CodeMirror measures itself on creation. Created inside a hidden panel
+       * it measures zero, and stays zero-height after the panel is shown until
+       * something forces a re-measure.
+       */
+      if (id === 'middle-panel' && editorView) requestAnimationFrame(() => editorView.requestMeasure());
+    }
+    window.showPanel = showPanel;
+
+    document.querySelectorAll('.tabbar-btn').forEach(b => {
+      b.addEventListener('click', () => showPanel(b.dataset.panel));
+    });
+    MOBILE.addEventListener('change', applyPanels);
+
+    /*
+     * THE KEYBOARD.
+     *
+     * iOS does not resize the layout viewport when the keyboard opens, so
+     * 100dvh stays full-screen and the bottom of the app — the tab bar, the
+     * commit bar, the Send button — sits underneath it. visualViewport is the
+     * only thing that reports the real visible area; WebKit does not support
+     * `interactive-widget`, so there is no CSS-only version of this.
+     *
+     * The settle counter is from TRADDOMIUM's viewportFit.ts, which learned it
+     * the same way: iOS fires these events continuously throughout the toolbar
+     * animation, and reacting to every one makes the bar jitter for half a
+     * second on every focus.
+     */
+    (function keyboardInset() {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      let last = -1;
+      const apply = () => {
+        const gap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        const px = gap > 24 ? Math.round(gap) : 0;   // ignore toolbar-sized noise
+        if (px === last) return;
+        last = px;
+        document.documentElement.style.setProperty('--kb', px + 'px');
+      };
+      vv.addEventListener('resize', apply);
+      vv.addEventListener('scroll', apply);
+      apply();
+    })();
+
     // --- STATE ---
     let editorView;
     let currentFile = { path: '', sha: null, isNew: false };
@@ -630,6 +884,7 @@
         field.classList.toggle('has-key', hasKey);
         dot.title = hasKey ? 'A key is stored in this browser' : 'No key stored';
       });
+      refreshFoldSummaries();
     }
 
     ['openai', 'claude', 'github'].forEach(k => {
@@ -652,11 +907,18 @@
     updateKeyStatus();
 
     // --- EDITOR ---
+    /*
+     * `javascript()` bare highlights .ts as plain JS, which is wrong for every
+     * file in both game repos: types, interfaces and generics all render as
+     * errors-in-waiting. jsx covers .tsx and .jsx at no cost.
+     */
     function getLangExt(filename) {
       if (filename.endsWith('.html')) return html();
       if (filename.endsWith('.css')) return css();
       if (filename.endsWith('.json')) return json();
-      return javascript();
+      const typescript = /\.(ts|tsx|mts|cts)$/.test(filename);
+      const jsx = /\.(tsx|jsx)$/.test(filename);
+      return javascript({ typescript, jsx });
     }
 
     const defaultExtensions = [
@@ -667,6 +929,12 @@
       dropCursor(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
+      /*
+       * Without this a long line scrolls sideways, and in a 390px column that
+       * means most real source is read a third of a statement at a time while
+       * hunting for a horizontal scrollbar with a thumb.
+       */
+      EditorView.lineWrapping,
       oneDark
     ];
 
@@ -680,6 +948,17 @@
       });
     }
     initEditor();
+    applyPanels();   // after initEditor, so a measure call has something to measure
+
+    /*
+     * Fold on arrival, not only on change: a returning visit already has its
+     * keys in localStorage, and unfolding them again every launch would put
+     * the settings back on top of the file list where they started.
+     */
+    refreshFoldSummaries();
+    if (MOBILE.matches && ['openaiKey', 'claudeKey', 'githubKey'].some(k => localStorage.getItem(k))) {
+      setFold('sec-keys', true);
+    }
 
     function setEditorContent(content, filename) {
       const newState = EditorState.create({
@@ -1135,7 +1414,25 @@
         files.sort((a,b) => a.path.localeCompare(b.path)).forEach(f => {
           const div = document.createElement('div');
           div.className = 'file-item';
-          div.textContent = f.path;
+          /*
+           * `src/scenes/antKinds.ts` truncated from the right renders as
+           * `src/scenes/antKind…` — it eats the filename, which is the only
+           * part you are scanning for. The directory is what gets clipped
+           * instead, from its left, and the name always survives whole.
+           */
+          const cut = f.path.lastIndexOf('/');
+          const dir = cut < 0 ? '' : f.path.slice(0, cut + 1);
+          const name = cut < 0 ? f.path : f.path.slice(cut + 1);
+          if (dir) {
+            const d = document.createElement('span');
+            d.className = 'fi-dir';
+            d.textContent = dir;
+            div.appendChild(d);
+          }
+          const n = document.createElement('span');
+          n.className = 'fi-name';
+          n.textContent = name;
+          div.appendChild(n);
           div.title = f.path;
           div.dataset.path = f.path;
           /*
@@ -1156,6 +1453,12 @@
           listEl.appendChild(div);
         });
         rememberRepo(owner, repo, branch);
+        /*
+         * The picker has served its purpose; what you want on screen now is
+         * the file list. Folded, not hidden — the header still names the repo.
+         */
+        refreshFoldSummaries();
+        if (MOBILE.matches) setFold('sec-repo', true);
       } catch(e) {
         listEl.innerHTML = `<div class="error-text" style="padding:12px;">${e.message}</div>`;
       }
@@ -1184,6 +1487,10 @@
         el.classList.toggle('active', el.dataset.path === path);
       });
 
+      // On a phone the list and the editor are different screens; opening a
+      // file means going there. On desktop this is a no-op.
+      showPanel('middle-panel');
+
       if (isBinaryPath(path)) {
         return refuseFile(path, 'Binary file. Opening it as text would corrupt it on commit.');
       }
@@ -1203,7 +1510,9 @@
           : (await apiGH(`/repos/${owner}/${repo}/contents/${encodePath(path)}?ref=${encodeURIComponent(branch)}`)).sha;
         const blob = await apiGH(`/repos/${owner}/${repo}/git/blobs/${sha}`);
         if (blob.encoding !== 'base64') {
-          return refuseFile(path, `GitHub returned encoding "${blob.encoding}" rather than base64.`);
+          return refuseFile(path, blob.encoding
+            ? `GitHub returned encoding "${blob.encoding}" rather than base64.`
+            : 'GitHub returned no content for this file.');
         }
         const content = decodeB64UTF8(blob.content);
         if (content.includes('\u0000')) {
@@ -1217,6 +1526,17 @@
         getEl('current-file-path').textContent = 'Error loading file';
       }
     }
+
+    /*
+     * Filters what is already listed rather than refetching: the tree arrives
+     * in one request and holding it in the DOM is what makes this instant.
+     */
+    getEl('file-filter').addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      document.querySelectorAll('#file-list .file-item').forEach(el => {
+        el.hidden = q ? !el.dataset.path.toLowerCase().includes(q) : false;
+      });
+    });
 
     getEl('btn-new-file').onclick = () => {
       const path = prompt("New file path (e.g. src/utils.js):");
@@ -1638,5 +1958,18 @@ deliverable.`,
       }
     };
   </script>
+  <!--
+    Only the panels that exist. Run and Tune arrive with the loader and the
+    inspector; advertising them now would be three-fifths of a tab bar that
+    does nothing, and an unavailable action must never look functional.
+  -->
+  <nav id="tabbar" role="tablist" aria-label="Panels">
+    <button class="tabbar-btn" role="tab" data-panel="left-panel" aria-selected="false">
+      <span class="tabbar-glyph" aria-hidden="true">&#9776;</span>FILES</button>
+    <button class="tabbar-btn" role="tab" data-panel="middle-panel" aria-selected="false">
+      <span class="tabbar-glyph" aria-hidden="true">&lt;/&gt;</span>CODE</button>
+    <button class="tabbar-btn" role="tab" data-panel="right-panel" aria-selected="false">
+      <span class="tabbar-glyph" aria-hidden="true">&#9679;</span>CHAT</button>
+  </nav>
 </body>
 </html>

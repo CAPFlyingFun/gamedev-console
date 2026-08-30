@@ -27,6 +27,27 @@ A refusal must also *disarm the commit path*, not merely warn: `pushAfterRefusal
 asserts zero PUTs. A warning that still let the push through would be the
 original bug wearing a label.
 
+## console-shell.mjs
+
+The phone shell: one panel at a time, 44px targets, the folds, and the
+keyboard. It drives the same built page at 390x844, and finishes on a
+1440x900 context asserting the desktop three-column layout is untouched —
+the whole shell is inside one media query, and it would be easy to fix the
+phone by breaking the desktop without noticing.
+
+The keyboard case is the one worth understanding. iOS shrinks
+`visualViewport` but leaves `window.innerHeight` alone, so `100dvh` stays
+full-screen and the bottom of the app — tab bar, commit bar, Send — sits
+underneath the keyboard. The test reproduces exactly that asymmetry by
+redefining `visualViewport.height` and firing `resize`. It also asserts that
+a 12px change moves nothing: iOS fires these continuously through the
+toolbar animation, and reacting to every one makes the bar jitter on focus.
+
+Against a pre-shell build the three layout assertions fail as they should,
+then the run stops on an element that build does not have. That is expected
+for feature tests; `console-github.mjs` is the suite that runs end to end
+against both.
+
 ## Running
 
 ```sh
