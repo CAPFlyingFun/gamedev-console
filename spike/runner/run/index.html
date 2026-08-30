@@ -1,0 +1,49 @@
+<!doctype html><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>html,body{margin:0;height:100%;background:#000;color:#0f0;font:14px monospace;overflow:hidden}</style>
+<body><div id=out>runner: waiting</div>
+<script>
+/* CLASSIC script on purpose. A type=module bootstrap would start a module graph
+   and the dynamically injected import map would be silently ignored. */
+(function () {
+  var HOST = window.__HOST_OVERRIDE || 'http://127.0.0.1:8801';
+  var out = document.getElementById('out');
+  function say(s){ out.textContent = s; }
+
+  addEventListener('message', function onMsg(e) {
+    if (e.origin !== HOST || !e.data || e.data.t !== 'pf:boot') return;
+    removeEventListener('message', onMsg);
+    try { boot(JSON.parse(new TextDecoder().decode(e.data.payload))); }
+    catch (err) { parent.postMessage({t:'pf:error', v:'boot threw: '+(err.stack||err)}, HOST); }
+  });
+
+  function boot(p) {
+    if (p.css) { var st=document.createElement('style'); st.textContent=p.css; document.head.appendChild(st); }
+    if (p.body) { document.body.innerHTML = p.body; }   /* the game's own document */
+    var map = { imports: Object.assign({}, p.imports || {}) };
+    var n = 0;
+    for (var k in p.modules) {
+      map.imports[k] = URL.createObjectURL(new Blob([p.modules[k]], { type:'text/javascript' }));
+      n++;
+    }
+    var im = document.createElement('script');
+    im.type = 'importmap';
+    im.textContent = JSON.stringify(map);
+    document.head.appendChild(im);          // nothing has module-loaded yet => map is honoured
+    say('runner: injected map with ' + n + ' modules; importing ' + p.entry);
+
+    window.onerror = function (m, src, ln) {
+      parent.postMessage({t:'pf:error', v: m+' @'+src+':'+ln}, HOST);
+    };
+    window.onunhandledrejection = function (ev) {
+      parent.postMessage({t:'pf:error', v: 'unhandled: '+String(ev.reason && (ev.reason.stack||ev.reason))}, HOST);
+    };
+    import(p.entry).then(function(){
+      parent.postMessage({t:'pf:booted'}, HOST);
+    }).catch(function (e) {
+      parent.postMessage({t:'pf:error', v: String(e.stack||e)}, HOST);
+    });
+  }
+  parent.postMessage({ t:'pf:ready' }, HOST);
+})();
+</script>

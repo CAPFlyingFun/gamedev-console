@@ -1,0 +1,35 @@
+<!doctype html><meta charset=utf-8><title>console</title>
+<style>html,body{margin:0;height:100%;background:#111;color:#ddd;font:13px monospace}
+iframe{width:100%;height:70vh;border:0;background:#000}#log{padding:8px;white-space:pre-wrap}</style>
+<body>
+<div id=log>console: booting</div>
+<iframe id=f sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-modals"></iframe>
+<script>
+const RUNNER = 'http://127.0.0.1:8802';
+const log = document.getElementById('log');
+const results = [];
+function L(s){ results.push(s); log.textContent = results.join('\n'); }
+window.__spikeResults = results;
+window.__spikeDone = false;
+
+addEventListener('message', (e) => {
+  if (e.origin !== RUNNER) return;
+  const d = e.data || {};
+  if (d.t === 'pf:ready') { L('OK  handshake: runner said ready'); sendPayload(); }
+  else if (d.t === 'pf:booted') { L('OK  entry module imported'); check(); }
+  else if (d.t === 'pf:error') { L('ERR ' + d.v); window.__spikeDone = true; }
+});
+
+async function sendPayload() {
+  const payload = await fetch('./payload.json').then(r => r.arrayBuffer());
+  L('OK  payload ' + (payload.byteLength/1024).toFixed(1) + ' KB');
+  document.getElementById('f').contentWindow.postMessage({t:'pf:boot', payload}, RUNNER, [payload]);
+  L('OK  posted as transferable (byteLength now ' + payload.byteLength + ' = detached)');
+}
+
+function check(){
+  // ask the runner what it rendered, via its own reporting channel
+  setTimeout(() => { window.__spikeDone = true; }, 500);
+}
+document.getElementById('f').src = RUNNER + '/run/index.html';
+</script>

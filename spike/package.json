@@ -1,0 +1,16 @@
+{
+  "name": "runner-spike",
+  "private": true,
+  "type": "module",
+  "description": "Proof that a TS game runs in a cross-origin browser runner with no build step. See README.md.",
+  "scripts": {
+    "link": "node link.mjs",
+    "serve:console": "python3 -m http.server 8801 --directory console",
+    "serve:runner": "python3 -m http.server 8802 --directory runner",
+    "serve:assets": "python3 cors-server.py"
+  },
+  "dependencies": {
+    "sucrase": "^3.35.0",
+    "three": "0.180.0"
+  }
+}

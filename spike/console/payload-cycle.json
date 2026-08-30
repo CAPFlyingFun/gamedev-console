@@ -1,0 +1,11 @@
+{
+  "entry": "~src/main.ts",
+  "css": "",
+  "body": "<div id=\"out\">runner: waiting</div>",
+  "modules": {
+    "~src/main.ts": "\nimport { label } from '~src/b.ts';\nimport { VERSION } from '~src/c.ts';\nexport const fromMain = 'MAIN';\ndocument.getElementById('out').textContent = 'entry ran: ' + label() + ' v' + VERSION;\n",
+    "~src/b.ts": "\nimport { fromMain } from '~src/main.ts';\nexport function label(){ return 'b-sees-' + String(fromMain); }\n",
+    "~src/c.ts": "export const VERSION = 42;"
+  },
+  "imports": {}
+}
