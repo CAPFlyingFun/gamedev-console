@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Story Room</title>
+<style>
+  /*
+   * STORY ROOM — a separate page from the console on purpose. It is a plain
+   * static file in public/, so Vite copies it to /story-room.html untouched and
+   * nothing in the console's own code or build can be broken by it.
+   *
+   * Keys: it reads the same localStorage keys the console uses (openaiKey,
+   * claudeKey, githubKey) because both pages live on the same origin. Nothing
+   * goes through a server; the browser talks straight to the APIs.
+   */
+  :root {
+    --bg: #0f1218; --panel: #171c26; --panel2: #1e2431; --line: #2b3345;
+    --text: #e8ecf4; --muted: #93a0b8; --accent: #6aa9ff;
+    --gpt: #4f8cff; --claude: #e5604f; --josh: #4fc27a; --note: #7d8799;
+    --warn: #f0b429; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { padding: 0 16px calc(24px + env(safe-area-inset-bottom)); max-width: 880px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0 6px; }
+  h1 { font-size: 1.25rem; margin: 0; }
+  a { color: var(--accent); }
+  .sub { color: var(--muted); font-size: .85rem; margin: 0 0 10px; }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 10px 0; }
+  summary { padding: 12px 14px; cursor: pointer; font-weight: 600; }
+  .body { padding: 0 14px 14px; }
+  label { display: block; font-size: .8rem; color: var(--muted); margin: 10px 0 4px; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px; font: inherit; font-size: 16px; /* 16px stops iOS zoom */ }
+  textarea { min-height: 90px; resize: vertical; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > * { flex: 1 1 auto; }
+  .row > .fit { flex: 0 0 auto; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 11px 14px; font: inherit; font-size: .95rem; cursor: pointer; min-height: 44px; }
+  button.primary { background: var(--accent); color: #07101f; border-color: var(--accent); font-weight: 600; }
+  button.danger { border-color: var(--err); color: var(--err); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.small { padding: 6px 10px; min-height: 34px; font-size: .8rem; }
+  .status { font-size: .85rem; color: var(--muted); margin-top: 8px; white-space: pre-wrap; }
+  .ok { color: var(--josh); } .bad { color: var(--err); }
+  .banner { background: #3a1d22; border: 1px solid var(--err); color: #ffd3d3; border-radius: 10px;
+    padding: 10px 12px; margin: 10px 0; white-space: pre-wrap; font-size: .9rem; }
+  .guard { background: #2b2614; border: 1px solid var(--warn); color: #f6e3a6; border-radius: 10px;
+    padding: 10px 12px; margin: 10px 0; font-size: .85rem; }
+  #log { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+  .msg { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--note);
+    border-radius: 12px; padding: 10px 12px; }
+  .msg.chatgpt { border-left-color: var(--gpt); }
+  .msg.claude { border-left-color: var(--claude); }
+  .msg.joshua { border-left-color: var(--josh); }
+  .msg .head { font-size: .78rem; color: var(--muted); margin-bottom: 6px; }
+  .msg .who { font-weight: 700; }
+  .msg.chatgpt .who { color: var(--gpt); } .msg.claude .who { color: var(--claude); } .msg.joshua .who { color: var(--josh); }
+  .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.note .text { color: var(--muted); font-size: .85rem; }
+  .msg .tools { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .msg .tools .on { background: #23361f; border-color: var(--josh); }
+  .thinking { color: var(--muted); font-style: italic; }
+  .dock { position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 18px); padding: 14px 0 6px; }
+  ul.ideas { margin: 6px 0 0; padding-left: 18px; } ul.ideas li { margin: 4px 0; font-size: .9rem; overflow-wrap: anywhere; }
+  .pill { display: inline-block; font-size: .72rem; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; margin-right: 4px; }
+  pre.out { white-space: pre-wrap; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: .85rem; max-height: 360px; overflow: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎭 Story Room</h1>
+  <a href="./">← GameDev Console</a>
+</header>
+<p class="sub">ChatGPT and Claude take turns planning TRADDOMIUM story ideas. You moderate. Planning only: nothing here approves or writes a chapter.</p>
+
+<div class="guard">
+  Joshua is the only approver. Ideas saved here are <b>proposals, not canon</b>. Every turn is a paid API call on your own keys, so the turn cap and Stop button are real limits.
+</div>
+
+<details id="d-keys">
+  <summary>1 · Keys &amp; models</summary>
+  <div class="body">
+    <div id="keystatus" class="status"></div>
+    <label for="k-openai">OpenAI key (only if not already saved from the console)</label>
+    <input type="password" id="k-openai" autocomplete="off" placeholder="sk-…" />
+    <label for="k-claude">Anthropic (Claude) key</label>
+    <input type="password" id="k-claude" autocomplete="off" placeholder="sk-ant-…" />
+    <div class="row" style="margin-top:8px">
+      <button id="btn-savekeys">Save keys in this browser</button>
+      <button id="btn-models">Load models</button>
+    </div>
+    <label for="m-openai">ChatGPT model</label>
+    <input type="text" id="m-openai" list="dl-openai" autocomplete="off" />
+    <datalist id="dl-openai"></datalist>
+    <label for="m-claude">Claude model</label>
+    <input type="text" id="m-claude" list="dl-claude" autocomplete="off" />
+    <datalist id="dl-claude"></datalist>
+    <div id="modelnote" class="status"></div>
+    <p class="status">Keys stay in this browser and are sent only to the API each belongs to. The GitHub token (if you saved one in the console) is used read-only here.</p>
+  </div>
+</details>
+
+<details id="d-story" open>
+  <summary>2 · Story context (read first)</summary>
+  <div class="body">
+    <label for="repo">Story repository</label>
+    <input type="text" id="repo" value="CAPFlyingFun/TMB-Story" autocomplete="off" />
+    <div class="row">
+      <div class="fit"><label for="nch" style="margin-top:0">Latest chapters in full</label>
+        <input type="number" id="nch" value="3" min="1" max="6" style="width:90px" /></div>
+      <div class="fit"><label for="inc-rules" style="margin-top:0">Also include</label>
+        <select id="inc-rules"><option value="0">Core files only</option><option value="1">+ full story rules (longer, costs more)</option></select></div>
+    </div>
+    <button id="btn-load" class="primary" style="margin-top:10px;width:100%">Fetch latest story from GitHub</button>
+    <div id="storystatus" class="status"></div>
+    <label for="northstar">Your long-term vision &amp; notes for the writers (editable, saved here)</label>
+    <textarea id="northstar" style="min-height:170px"></textarea>
+  </div>
+</details>
+
+<details id="d-session" open>
+  <summary>3 · Session</summary>
+  <div class="body">
+    <label for="topic">What should they discuss?</label>
+    <textarea id="topic" style="min-height:70px" placeholder="e.g. What has to happen between now and Sarah giving birth, and which subplots should start early?"></textarea>
+    <div class="row">
+      <div><label for="firstwho">Who goes first</label>
+        <select id="firstwho"><option value="chatgpt">ChatGPT</option><option value="claude">Claude</option></select></div>
+      <div><label for="maxturns">Auto mode: AI turns</label>
+        <input type="number" id="maxturns" value="6" min="1" max="20" /></div>
+      <div><label for="delay">Pause between turns (sec)</label>
+        <input type="number" id="delay" value="3" min="0" max="120" /></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btn-new" class="danger">New session</button>
+      <button id="btn-export">Download transcript (.md)</button>
+      <button id="btn-copyt">Copy transcript</button>
+    </div>
+  </div>
+</details>
+
+<div id="err" class="banner" style="display:none"></div>
+<div id="log"></div>
+
+<details id="d-ideas">
+  <summary>⭐ Saved ideas &amp; 🅿️ parked ideas</summary>
+  <div class="body">
+    <div><b>Saved</b><ul class="ideas" id="saved-list"></ul></div>
+    <div style="margin-top:10px"><b>Parked (not canon, saved for later)</b><ul class="ideas" id="parked-list"></ul></div>
+  </div>
+</details>
+
+<details id="d-sum">
+  <summary>📋 Summary for Trello (proposed plan, NOT approved)</summary>
+  <div class="body">
+    <div class="row">
+      <div><label for="sumwho" style="margin-top:0">Written by</label>
+        <select id="sumwho"><option value="claude">Claude</option><option value="chatgpt">ChatGPT</option></select></div>
+      <button id="btn-sum" class="primary fit" style="align-self:end">Write summary</button>
+    </div>
+    <pre id="sumout" class="out" style="display:none"></pre>
+    <div class="row" id="sumbtns" style="display:none;margin-top:8px">
+      <button id="btn-sumcopy">Copy</button>
+      <button id="btn-sumdl">Download .md</button>
+    </div>
+  </div>
+</details>
+
+<div class="dock">
+  <label for="josh" style="margin-top:0">Your turn to moderate (optional)</label>
+  <textarea id="josh" style="min-height:64px" placeholder="Add an idea, ask a question, redirect them…"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="btn-josh">Add my message</button>
+    <button id="btn-josh-idea">Add as my idea</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="btn-next" class="primary">Next AI turn</button>
+    <button id="btn-auto">▶ Auto</button>
+    <button id="btn-stop" class="danger" disabled>⏹ Stop</button>
+  </div>
+  <div id="turnnote" class="status"></div>
+</div>
+
+<script>
+'use strict';
+/* ------------------------------------------------------------------ helpers */
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode: page still works, just not remembered */ } },
+  del(k) { try { localStorage.removeItem(k); } catch { /* same */ } },
+};
+const NAME = { chatgpt: 'ChatGPT', claude: 'Claude', joshua: 'Joshua' };
+const HARD_MAX_TURNS = 40;      /* absolute ceiling per session, whatever the box says */
+
+function chicago(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(d).replace(/,\s*/, ' ');
+}
+function showError(msg) {
+  const el = $('err');
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+}
+function download(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t);
+    t.select(); try { document.execCommand('copy'); } catch { /* nothing more to try */ } t.remove();
+  }
+  if (btn) { const o = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(() => (btn.textContent = o), 1400); }
+}
+function ranges(nums) {            /* [1,2,3,5] -> "1-3, 5" */
+  const out = []; let s = null, p = null;
+  for (const n of [...nums].sort((a, b) => a - b)) {
+    if (s === null) { s = p = n; continue; }
+    if (n === p + 1) { p = n; continue; }
+    out.push(s === p ? `${s}` : `${s}-${p}`); s = p = n;
+  }
+  if (s !== null) out.push(s === p ? `${s}` : `${s}-${p}`);
+  return out.join(', ');
+}
+
+/* -------------------------------------------------------------------- state */
+const DEFAULT_NOTES = `LONG-TERM DESTINATION (Joshua's North Star; paraphrased, ask him for exact wording):
+The main adventure/game should eventually centre on Jack and Sarah Bennett's SON: a Smalland + ARK-inspired tiny-world survival adventure with exploration, creature relationships/taming, mysteries and battles.
+BUT readers must first see the catastrophe, how the shrunken settlement survives, Sarah giving birth, and elements of the son's early life, then time moves toward the son turning about 18.
+Human dangers and giant-scale wilderness keep exploration constrained early: early outings are controlled emergencies, scouting and survival expeditions. As the community matures, an Academy and safer training systems make wider exploration viable. This must feel EARNED, not a sudden unlock.
+Possible shape (flexible, NOT chapter assignments): Act I founding generation / Act II first miniature generation / Act III handoff to the son as protagonist / Act IV extended survival world.
+Academy details (age 18, eight years, curriculum) are ideas to verify against approved canon, not facts characters may state yet.
+DO NOT: choose the son's name, birth year or the time-jump chapter; rush the 18-year jump; resolve author-only mysteries; treat chapters awaiting approval as canon.
+Joshua decides when and how the time jump happens.`;
+
+let S = { topic: '', turns: [], nextWho: 'chatgpt', aiCount: 0 };
+let CTX = null;                  /* loaded story pack */
+let running = false;             /* a turn is in flight */
+let auto = false;                /* auto mode armed */
+let abortCtl = null;
+
+function saveSession() { store.set('sr_session', JSON.stringify(S)); }
+function loadSession() {
+  try { const s = JSON.parse(store.get('sr_session') || 'null'); if (s && Array.isArray(s.turns)) S = s; } catch { /* corrupt: start fresh */ }
+}
+
+/* --------------------------------------------------------------- keys/models */
+function keyStatus() {
+  const has = (k) => !!store.get(k);
+  $('keystatus').innerHTML =
+    `OpenAI key: <span class="${has('openaiKey') ? 'ok' : 'bad'}">${has('openaiKey') ? 'saved ✓' : 'missing'}</span> · ` +
+    `Claude key: <span class="${has('claudeKey') ? 'ok' : 'bad'}">${has('claudeKey') ? 'saved ✓' : 'missing'}</span> · ` +
+    `GitHub token: ${has('githubKey') ? 'saved (read-only use)' : 'none (public repo works, 60 requests/hour)'}`;
+}
+function fillDatalist(id, ids) {
+  const dl = $(id); dl.innerHTML = '';
+  ids.forEach((m) => { const o = document.createElement('option'); o.value = m; dl.appendChild(o); });
+}
+function storedModels(k) { try { const a = JSON.parse(store.get(k) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } }
+
+const CHAT_MODEL = /^(gpt-|o\d|chatgpt-)/i;
+const NOT_CHAT = /(embed|tts|whisper|dall-e|audio|realtime|moderation|image|transcribe|instruct|davinci|babbage)/i;
+
+function apiError(provider, status, raw) {
+  let message = (raw || '').trim().slice(0, 400), code = '';
+  try { const e = JSON.parse(raw).error || {}; message = e.message || message; code = e.code || e.type || ''; } catch { /* keep raw */ }
+  const hints = {
+    insufficient_quota: 'The key works but the project has no credit balance. Add credit under Billing.',
+    invalid_api_key: 'The key was rejected. Check it was pasted whole.',
+    authentication_error: 'The key was rejected. Check it was pasted whole.',
+    model_not_found: 'That model is not available to this key. Press "Load models" and pick one.',
+    not_found_error: 'No such model for this key. Press "Load models" and pick one.',
+    rate_limit_error: 'Rate limited. Wait a moment and try again.',
+  };
+  return new Error(`${provider} (${status}${code ? ' ' + code : ''}): ${message}${hints[code] ? '\n\n' + hints[code] : ''}`);
+}
+
+async function loadModels() {
+  const note = []; const problems = [];
+  try {
+    const k = store.get('openaiKey');
+    if (!k) note.push('openai: no key'); else {
+      const r = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${k}` } });
+      if (!r.ok) throw apiError('OpenAI', r.status, await r.text());
+      const ids = ((await r.json()).data || []).filter((m) => CHAT_MODEL.test(m.id) && !NOT_CHAT.test(m.id))
+        .sort((a, b) => (b.created || 0) - (a.created || 0)).map((m) => m.id);
+      store.set('modelsOpenai', JSON.stringify(ids)); fillDatalist('dl-openai', ids); note.push(`openai: ${ids.length}`);
+    }
+  } catch (e) { problems.push(e.message); note.push('openai: failed'); }
+  try {
+    const k = store.get('claudeKey');
+    if (!k) note.push('claude: no key'); else {
+      const r = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+        headers: { 'x-api-key': k, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } });
+      if (!r.ok) throw apiError('Claude', r.status, await r.text());
+      const ids = ((await r.json()).data || []).map((m) => m.id);
+      store.set('modelsClaude', JSON.stringify(ids)); fillDatalist('dl-claude', ids); note.push(`claude: ${ids.length}`);
+    }
+  } catch (e) { problems.push(e.message); note.push('claude: failed'); }
+  /* A freshly loaded list should leave something usable in each box: the newest model, unless one is already chosen. */
+  for (const [inputId, listKey, saveKey] of [['m-openai', 'modelsOpenai', 'sr_modelOpenai'], ['m-claude', 'modelsClaude', 'sr_modelClaude']]) {
+    const ids = storedModels(listKey);
+    if (!$(inputId).value.trim() && ids.length) { $(inputId).value = ids[0]; store.set(saveKey, ids[0]); }
+  }
+  $('modelnote').textContent = note.join('  ·  ');
+  showError(problems.join('\n\n'));
+}
+
+function modelFor(who) {
+  const v = $(who === 'chatgpt' ? 'm-openai' : 'm-claude').value.trim();
+  if (!v) throw new Error(`Pick a ${NAME[who]} model first (Keys & models → Load models).`);
+  return v;
+}
+
+/* ---------------------------------------------------------------- API calls */
+async function callOpenAI(system, user, model, signal) {
+  const key = store.get('openaiKey'); if (!key) throw new Error('OpenAI key missing');
+  /* System text is folded into the user turn: reasoning models reject the system role, and this works on all. */
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST', signal,
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: `${system}\n\n---\n\n${user}` }] }),
+  });
+  if (!res.ok) throw apiError('OpenAI', res.status, await res.text());
+  const data = await res.json();
+  const text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  if (!text) throw new Error('OpenAI returned no text.');
+  return text.trim();
+}
+async function callClaude(system, user, model, signal, maxTokens = 3000) {
+  const key = store.get('claudeKey'); if (!key) throw new Error('Claude key missing');
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST', signal,
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+  });
+  if (!res.ok) throw apiError('Claude', res.status, await res.text());
+  const data = await res.json();
+  const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+  if (!text) throw new Error(`Claude returned no text (stop_reason: ${data.stop_reason}).`);
+  return text.trim();
+}
+const callAI = (who, system, user, signal, maxTokens) =>
+  who === 'chatgpt' ? callOpenAI(system, user, modelFor('chatgpt'), signal)
+                    : callClaude(system, user, modelFor('claude'), signal, maxTokens);
+
+/* ------------------------------------------------------------- story loader */
+function ghHeaders() {
+  const h = { Accept: 'application/vnd.github+json' };
+  const t = store.get('githubKey'); if (t) h.Authorization = `Bearer ${t}`;   /* read-only use */
+  return h;
+}
+async function ghJson(path) {
+  const r = await fetch(`https://api.github.com${path}`, { headers: ghHeaders() });
+  if (!r.ok) {
+    const t = await r.text();
+    if (r.status === 403 || r.status === 429) throw new Error('GitHub rate limit reached. Save a GitHub token in the console (read access is enough) or wait a little.');
+    throw new Error(`GitHub ${r.status}: ${t.slice(0, 200)}`);
+  }
+  return r.json();
+}
+const CAP = 14000;
+async function loadStory() {
+  showError('');
+  const btn = $('btn-load'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Fetching…';
+  try {
+    const repo = $('repo').value.trim();
+    const m = /^([\w.-]+)\/([\w.-]+)$/.exec(repo);
+    if (!m) throw new Error('Repository should look like owner/name.');
+    const [, owner, name] = m;
+    const commit = await ghJson(`/repos/${owner}/${name}/commits/main`);
+    const sha = commit.sha;
+    const tree = await ghJson(`/repos/${owner}/${name}/git/trees/${sha}?recursive=1`);
+    const paths = (tree.tree || []).filter((t) => t.type === 'blob').map((t) => t.path);
+    const chapters = paths.filter((p) => /^chapters\/movement-\d+\/chapter-\d{4}\.md$/.test(p)).sort();
+    if (!chapters.length) throw new Error('No chapters found under chapters/movement-*/ in that repository.');
+    const raw = async (p) => {
+      const r = await fetch(`https://raw.githubusercontent.com/${owner}/${name}/${sha}/${p}`);
+      if (!r.ok) throw new Error(`Could not read ${p} (${r.status}).`);
+      return r.text();
+    };
+    const chNum = (p) => parseInt(/chapter-(\d{4})/.exec(p)[1], 10);
+    const nch = Math.max(1, Math.min(6, parseInt($('nch').value, 10) || 3));
+    const lastPaths = chapters.slice(-nch);
+
+    const core = ['CLAUDE.md', 'story-rules/STORY_OVERVIEW.md', 'story-rules/WORLD_RULES.md', 'story-rules/OPEN_QUESTIONS.md',
+      'outline/STORY_DIRECTION.md', 'story-rules/CHARACTERS.md', 'story-rules/TIMELINE.md', 'story-rules/CHAPTER_INDEX.md'];
+    if ($('inc-rules').value === '1') core.push('story-rules/TMB_STORY_RULES.md', 'story-rules/LOCATIONS.md', 'story-rules/CREATURES.md', 'story-rules/TECHNOLOGY.md');
+    const docs = []; const missing = [];
+    await Promise.all(core.map(async (p) => {
+      if (!paths.includes(p)) { missing.push(p); return; }
+      docs.push([p, await raw(p)]);
+    }));
+    docs.sort((a, b) => core.indexOf(a[0]) - core.indexOf(b[0]));
+    const chTexts = await Promise.all(lastPaths.map(async (p) => [p, await raw(p)]));
+
+    /* Approved = a row in the chapter index that says "approved". Anything else in chapters/ is a draft. */
+    const idx = (docs.find((d) => d[0] === 'story-rules/CHAPTER_INDEX.md') || ['', ''])[1];
+    const approved = new Set();
+    idx.split('\n').forEach((line) => {
+      const mm = /^\|\s*(\d{4})\s*\|/.exec(line);
+      if (mm && /approved/i.test(line)) approved.add(parseInt(mm[1], 10));
+    });
+    const all = chapters.map(chNum);
+    const pending = all.filter((n) => !approved.has(n));
+    const statusOf = (txt) => { const s = /^review_status:\s*(.+)$/m.exec(txt); return s ? s[1].trim() : 'unknown'; };
+
+    const clip = (t) => (t.length > CAP ? t.slice(0, CAP) + '\n[… clipped for length …]' : t);
+    let pack = `=== STORY STATE (fetched ${chicago()} America/Chicago) ===\n` +
+      `Repository ${repo}, branch main, HEAD ${sha.slice(0, 7)}. ${chapters.length} chapters in the manuscript (latest: Chapter ${Math.max(...all)}).\n` +
+      `APPROVED by Joshua (canon): chapters ${ranges([...approved]) || 'none'}.\n` +
+      `WRITTEN BUT AWAITING JOSHUA'S APPROVAL (drafts, NOT canon): chapters ${ranges(pending) || 'none'}.\n` +
+      `The ${nch} latest chapters follow in full, then the story rules. Chapter text is ground truth for what has happened.\n`;
+    pack += `\n=== JOSHUA'S LONG-TERM VISION AND NOTES ===\n${$('northstar').value.trim()}\n`;
+    for (const [p, t] of chTexts) pack += `\n=== CHAPTER FILE: ${p} (review_status: ${statusOf(t)}) ===\n${clip(t)}\n`;
+    for (const [p, t] of docs) pack += `\n=== FILE: ${p} ===\n${clip(t)}\n`;
+
+    CTX = { repo, sha, short: sha.slice(0, 7), chapterCount: chapters.length, approved: [...approved], pending, pack, at: chicago() };
+    store.set('sr_ctx_meta', JSON.stringify({ repo, short: CTX.short, at: CTX.at }));
+    $('storystatus').innerHTML =
+      `<span class="ok">Loaded ✓</span> HEAD <b>${CTX.short}</b> · ${chapters.length} chapters · approved: ${ranges([...approved]) || 'none'} · awaiting your approval: ${ranges(pending) || 'none'}\n` +
+      `Latest chapters read in full: ${lastPaths.map((p) => chNum(p)).join(', ')} · ${docs.length} story files · ~${Math.round(pack.length / 4000)}k tokens per turn` +
+      (missing.length ? `\nNot found (skipped): ${missing.join(', ')}` : '');
+    updateButtons();
+  } catch (e) {
+    showError(e.message);
+    $('storystatus').textContent = '';
+  } finally { btn.disabled = false; btn.textContent = label; }
+}
+
+/* ------------------------------------------------------------------ prompts */
+function systemFor(who) {
+  return `You are ${NAME[who]}, one of two AI co-writers (ChatGPT and Claude) in Joshua's "Story Room", planning future story directions for TRADDOMIUM: Micro Battle! (TMB), a serialized audiobook-first science-fiction story. Joshua is the author and the moderator. He can speak at any time and his words outrank yours and the other AI's.
+
+RULES (planning only):
+- You do not write chapters or chapter prose, and you do not approve anything. Only Joshua approves story direction. Nothing becomes canon because you and the other AI agree.
+- The STORY PACK below is ground truth. Never contradict approved chapters. Chapters "awaiting approval" are drafts: build on them carefully and flag the dependency.
+- Respond to the other writer's actual last point (and to Joshua if he spoke last). Give specific reasoning, not just agreement. Challenge ideas that create contradictions or would fit better elsewhere, constructively.
+- Tag ideas with their original proposer: [IDEA: ChatGPT], [IDEA: Claude], [IDEA: Joshua]. Credit the original proposer when you expand or revise an idea.
+- Do not resolve author-only mysteries or open questions, do not choose the time jump, do not name the son, and do not introduce major canon. Put those as "QUESTION FOR JOSHUA:" lines instead.
+- Work backward from Joshua's long-term destination to medium arcs and the next logical events. Consider A/B/C plotlines, multiple characters and POVs, foreshadowing and consequences.
+- Keep each turn to roughly 150-300 words: one or two focused ideas, plus at most one question. No headers and no speaker labels; the app adds those. Plain text only.
+
+STORY PACK
+${CTX.pack}`;
+}
+function transcriptText() {
+  return S.turns.filter((t) => t.who !== 'note').map((t) => {
+    const w = t.who === 'joshua' ? 'Joshua (author and moderator)' : NAME[t.who];
+    return `[${w}${t.asIdea ? ' - offered as [IDEA: Joshua]' : ''}]\n${t.text}`;
+  }).join('\n\n');
+}
+function userFor(who) {
+  const topic = S.topic.trim() || '(no topic set; start from Joshua\'s long-term vision and the current ending of the story)';
+  const tr = transcriptText();
+  return `SESSION TOPIC: ${topic}\n\nDISCUSSION SO FAR:\n${tr || '(nothing yet)'}\n\n` +
+    (tr ? `It is now your turn, ${NAME[who]}. Respond to the most recent contribution.`
+        : `You open the discussion, ${NAME[who]}. Start from the current ending of the story and Joshua's long-term vision.`);
+}
+
+/* ---------------------------------------------------------------- rendering */
+function render() {
+  const log = $('log'); log.innerHTML = '';
+  S.turns.forEach((t, i) => {
+    const d = document.createElement('div'); d.className = `msg ${t.who}`;
+    const h = document.createElement('div'); h.className = 'head';
+    const w = document.createElement('span'); w.className = 'who'; w.textContent = t.who === 'note' ? 'Note' : NAME[t.who];
+    h.appendChild(w);
+    h.appendChild(document.createTextNode(` · ${t.time}${t.n ? ` · turn ${t.n}` : ''}${t.sha ? ` · HEAD ${t.sha}` : ''}${t.asIdea ? ' · [IDEA: Joshua]' : ''}`));
+    const b = document.createElement('div'); b.className = 'text'; b.textContent = t.text;
+    d.appendChild(h); d.appendChild(b);
+    if (t.who !== 'note') {
+      const tools = document.createElement('div'); tools.className = 'tools';
+      const save = document.createElement('button'); save.className = 'small' + (t.idea === 'saved' ? ' on' : '');
+      save.textContent = t.idea === 'saved' ? '⭐ Saved' : '⭐ Save idea';
+      save.onclick = () => { t.idea = t.idea === 'saved' ? '' : 'saved'; saveSession(); render(); };
+      const park = document.createElement('button'); park.className = 'small' + (t.idea === 'parked' ? ' on' : '');
+      park.textContent = t.idea === 'parked' ? '🅿️ Parked' : '🅿️ Park';
+      park.onclick = () => { t.idea = t.idea === 'parked' ? '' : 'parked'; saveSession(); render(); };
+      const cp = document.createElement('button'); cp.className = 'small'; cp.textContent = 'Copy';
+      cp.onclick = () => copyText(t.text, cp);
+      tools.append(save, park, cp); d.appendChild(tools);
+    }
+    log.appendChild(d);
+  });
+  if (running) {
+    const p = document.createElement('div'); p.className = 'thinking'; p.id = 'thinking';
+    p.textContent = `${NAME[S.nextWho]} is thinking…`; log.appendChild(p);
+  }
+  for (const [kind, el] of [['saved', 'saved-list'], ['parked', 'parked-list']]) {
+    const ul = $(el); ul.innerHTML = '';
+    const items = S.turns.filter((t) => t.idea === kind);
+    if (!items.length) { const li = document.createElement('li'); li.textContent = 'none yet'; ul.appendChild(li); }
+    items.forEach((t) => {
+      const li = document.createElement('li');
+      const pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = `[IDEA: ${t.asIdea ? 'Joshua' : NAME[t.who]}] turn ${t.n || '·'}`;
+      li.appendChild(pill);
+      li.appendChild(document.createTextNode(t.text.length > 240 ? t.text.slice(0, 240) + '…' : t.text));
+      ul.appendChild(li);
+    });
+  }
+  $('turnnote').textContent = `AI turns this session: ${S.aiCount}/${HARD_MAX_TURNS}. Next: ${NAME[S.nextWho]}.`;
+  updateButtons();
+}
+function updateButtons() {
+  const ready = !!CTX;
+  $('btn-next').disabled = running || !ready || S.aiCount >= HARD_MAX_TURNS;
+  $('btn-auto').disabled = running || !ready || S.aiCount >= HARD_MAX_TURNS;
+  $('btn-stop').disabled = !running && !auto;
+  if (!ready) $('turnnote').textContent += ' Fetch the story first (step 2).';
+}
+function addTurn(t) {
+  S.turns.push({ time: chicago(), ...t });
+  saveSession(); render();
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+}
+
+/* -------------------------------------------------------------------- turns */
+async function oneTurn() {
+  if (running) return false;
+  if (!CTX) { showError('Fetch the story first (step 2). The writers must read the manuscript before talking.'); return false; }
+  if (S.aiCount >= HARD_MAX_TURNS) { showError(`Reached the ${HARD_MAX_TURNS}-turn ceiling for one session. Start a new session to continue.`); return false; }
+  showError('');
+  S.topic = $('topic').value;
+  const who = S.nextWho;
+  running = true; abortCtl = new AbortController(); render();
+  try {
+    const text = await callAI(who, systemFor(who), userFor(who), abortCtl.signal);
+    S.aiCount += 1;
+    S.nextWho = who === 'chatgpt' ? 'claude' : 'chatgpt';
+    running = false;
+    addTurn({ who, text, n: S.aiCount, sha: CTX.short });
+    return true;
+  } catch (e) {
+    running = false;
+    if (e.name === 'AbortError') addTurn({ who: 'note', text: `Stopped before ${NAME[who]} finished. Nothing from that turn was kept.` });
+    else showError(e.message);
+    render();
+    return false;
+  } finally { abortCtl = null; running = false; updateButtons(); }
+}
+async function runAuto() {
+  if (auto || running) return;
+  auto = true; $('btn-auto').textContent = '▶ Auto running…'; updateButtons();
+  const max = Math.max(1, Math.min(20, parseInt($('maxturns').value, 10) || 6));
+  const delay = Math.max(0, Math.min(120, parseInt($('delay').value, 10) || 0)) * 1000;
+  let done = 0;
+  while (auto && done < max) {
+    const ok = await oneTurn();
+    if (!ok) break;
+    done += 1;
+    if (auto && done < max && delay) {
+      /* A pause the moderator can use: type a message and the next turn will read it. */
+      await new Promise((r) => { const t = setTimeout(r, delay); window.__srWake = () => { clearTimeout(t); r(); }; });
+    }
+  }
+  if (auto && done >= max) addTurn({ who: 'note', text: `Auto mode finished its ${max} turns. Add your thoughts, then press Next AI turn or Auto to continue.` });
+  auto = false; $('btn-auto').textContent = '▶ Auto'; updateButtons();
+}
+function stopAll() {
+  auto = false;
+  if (window.__srWake) window.__srWake();
+  if (abortCtl) abortCtl.abort();
+  $('btn-auto').textContent = '▶ Auto'; updateButtons();
+}
+
+/* ------------------------------------------------------------ export/summary */
+function transcriptMd() {
+  const lines = [`# Story Room transcript`, '',
+    `- Date: ${chicago()} America/Chicago`,
+    `- Repository: ${CTX ? `${CTX.repo} @ ${CTX.short} (${CTX.chapterCount} chapters)` : 'not loaded'}`,
+    `- ChatGPT model: ${$('m-openai').value || '-'}`, `- Claude model: ${$('m-claude').value || '-'}`,
+    `- Topic: ${S.topic || '-'}`, '',
+    `> Planning only. Nothing here is approved. Only Joshua approves story direction.`, ''];
+  S.turns.forEach((t) => {
+    if (t.who === 'note') { lines.push(`*Note (${t.time}): ${t.text}*`, ''); return; }
+    lines.push(`### ${NAME[t.who]} | ${t.time} America/Chicago${t.n ? ` | Turn ${t.n}` : ''}${t.sha ? ` | TMB-Story HEAD ${t.sha}` : ''}${t.asIdea ? ' | [IDEA: Joshua]' : ''}${t.idea ? ` | ${t.idea.toUpperCase()}` : ''}`, '', t.text, '');
+  });
+  return lines.join('\n');
+}
+async function writeSummary() {
+  if (!S.turns.some((t) => t.who !== 'note')) { showError('Nothing to summarise yet.'); return; }
+  if (!CTX) { showError('Fetch the story first so the summary can check continuity.'); return; }
+  showError('');
+  const who = $('sumwho').value; const btn = $('btn-sum'); btn.disabled = true; btn.textContent = 'Writing…';
+  try {
+    const sys = `You are ${NAME[who]}, acting as neutral secretary for Joshua's Story Room. Write a summary of the discussion below for Joshua's review. This is a PROPOSED PLAN ONLY and nothing is approved; say so at the top.
+Sections, in this order, in plain text with simple headings:
+1. PROPOSED PLAN (NOT APPROVED): the next logical events, in order, and the reasoning that links them to Joshua's long-term vision.
+2. IDEAS: every idea as a bullet that starts with its ORIGINAL proposer tag, [IDEA: Joshua], [IDEA: ChatGPT] or [IDEA: Claude], never reassigned, with contributors credited after it. Mark ideas Joshua saved with (saved) and ones he parked with (parked).
+3. AGREEMENTS and DISAGREEMENTS between the writers.
+4. CONTINUITY RISKS against the story pack (approved chapters versus drafts).
+5. QUESTIONS FOR JOSHUA (including anything touching the time jump, the son's name, or open mysteries).
+Do not invent ideas that were not discussed. Keep it under 600 words.
+
+STORY PACK
+${CTX.pack}`;
+    const saved = S.turns.filter((t) => t.idea).map((t) => `- turn ${t.n || '-'} ${NAME[t.who]}${t.asIdea ? ' (as [IDEA: Joshua])' : ''}: ${t.idea}`).join('\n');
+    const user = `SESSION TOPIC: ${S.topic || '-'}\n\nFULL DISCUSSION:\n${transcriptText()}\n\nJOSHUA'S MARKS:\n${saved || '(none)'}`;
+    const out = await callAI(who, sys, user, undefined, 2500);
+    const header = `Story Room summary | ${chicago()} America/Chicago | written by ${NAME[who]} | TMB-Story HEAD ${CTX.short}\n\n`;
+    $('sumout').textContent = header + out; $('sumout').style.display = 'block'; $('sumbtns').style.display = 'flex';
+  } catch (e) { showError(e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Write summary'; }
+}
+
+/* ------------------------------------------------------------------- wiring */
+function init() {
+  loadSession();
+  $('northstar').value = store.get('sr_notes') || DEFAULT_NOTES;
+  $('northstar').addEventListener('input', () => store.set('sr_notes', $('northstar').value));
+  $('topic').value = S.topic || '';
+  $('topic').addEventListener('input', () => { S.topic = $('topic').value; saveSession(); });
+  $('repo').value = store.get('sr_repo') || 'CAPFlyingFun/TMB-Story';
+  $('repo').addEventListener('change', () => store.set('sr_repo', $('repo').value));
+  keyStatus();
+  const og = storedModels('modelsOpenai'), cl = storedModels('modelsClaude');
+  fillDatalist('dl-openai', og); fillDatalist('dl-claude', cl);
+  $('m-openai').value = store.get('sr_modelOpenai') || og[0] || '';
+  $('m-claude').value = store.get('sr_modelClaude') || cl[0] || '';
+  $('m-openai').addEventListener('change', () => store.set('sr_modelOpenai', $('m-openai').value.trim()));
+  $('m-claude').addEventListener('change', () => store.set('sr_modelClaude', $('m-claude').value.trim()));
+  if (!store.get('openaiKey') || !store.get('claudeKey')) $('d-keys').open = true;
+  $('firstwho').value = S.turns.length ? S.nextWho : 'chatgpt';
+  if (!S.turns.length) S.nextWho = 'chatgpt';
+  $('firstwho').addEventListener('change', () => { if (!S.turns.some((t) => t.who === 'chatgpt' || t.who === 'claude')) { S.nextWho = $('firstwho').value; saveSession(); render(); } });
+
+  $('btn-savekeys').onclick = () => {
+    const o = $('k-openai').value.trim(), c = $('k-claude').value.trim();
+    if (o) store.set('openaiKey', o); if (c) store.set('claudeKey', c);
+    $('k-openai').value = ''; $('k-claude').value = ''; keyStatus();
+  };
+  $('btn-models').onclick = async () => { $('btn-models').disabled = true; await loadModels(); $('btn-models').disabled = false; };
+  $('btn-load').onclick = loadStory;
+  $('btn-next').onclick = () => { oneTurn(); };
+  $('btn-auto').onclick = runAuto;
+  $('btn-stop').onclick = stopAll;
+  $('btn-josh').onclick = () => { const v = $('josh').value.trim(); if (!v) return; addTurn({ who: 'joshua', text: v }); $('josh').value = ''; };
+  $('btn-josh-idea').onclick = () => { const v = $('josh').value.trim(); if (!v) return; addTurn({ who: 'joshua', text: v, asIdea: true, idea: 'saved' }); $('josh').value = ''; };
+  $('btn-new').onclick = () => {
+    if (S.turns.length && !confirm('Start a new session? This clears the current discussion (download it first if you want it).')) return;
+    stopAll(); S = { topic: '', turns: [], nextWho: $('firstwho').value, aiCount: 0 }; $('topic').value = ''; $('sumout').style.display = 'none'; $('sumbtns').style.display = 'none';
+    saveSession(); showError(''); render();
+  };
+  $('btn-export').onclick = () => download(`story-room-${chicago().slice(0, 10)}.md`, transcriptMd());
+  $('btn-copyt').onclick = () => copyText(transcriptMd(), $('btn-copyt'));
+  $('btn-sum').onclick = writeSummary;
+  $('btn-sumcopy').onclick = () => copyText($('sumout').textContent, $('btn-sumcopy'));
+  $('btn-sumdl').onclick = () => download(`story-room-summary-${chicago().slice(0, 10)}.md`, $('sumout').textContent);
+  const meta = (() => { try { return JSON.parse(store.get('sr_ctx_meta') || 'null'); } catch { return null; } })();
+  if (meta) $('storystatus').textContent = `Last loaded ${meta.at} (HEAD ${meta.short}). Fetch again so the writers read the latest story.`;
+  render();
+}
+init();
+</script>
+</body>
+</html>
